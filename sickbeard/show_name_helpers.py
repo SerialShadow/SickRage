@@ -33,7 +33,7 @@ from name_parser.parser import NameParser, InvalidNameException, InvalidShowExce
 from lib.unidecode import unidecode
 from sickbeard.blackandwhitelist import BlackAndWhiteList
 
-resultFilters = ["sub(bed|ed|pack|s)", "(dk|fin|heb|kor|nor|nordic|pl|swe)sub(bed|ed|s)?",
+resultFilters = ["(dk|fin|heb|kor|nor|nordic|pl|swe)sub(bed|ed|s)?",
                  "(dir|sample|sub|nfo)fix", "sample", "(dvd)?extras",
                  "dub(bed)?"]
 
