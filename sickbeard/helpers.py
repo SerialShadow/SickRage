@@ -1349,6 +1349,9 @@ def headURL(url, params=None, headers={}, timeout=30, session=None, json=False, 
                         resp.status_code) + ': ' + codeDescription(resp.status_code), logger.DEBUG)
                     return False
 
+        if resp.status_code == 302:
+            return ((resp.headers._store['location'][1].find(u"http://192.168.168.30/spotweb/")) > -1)
+
         return resp.status_code == 200
 
     except requests.exceptions.HTTPError, e:
