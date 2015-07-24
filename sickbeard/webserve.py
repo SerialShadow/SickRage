@@ -52,18 +52,20 @@ from sickbeard.scene_numbering import get_scene_numbering, set_scene_numbering, 
     get_xem_numbering_for_show, get_scene_absolute_numbering_for_show, get_xem_absolute_numbering_for_show, \
     get_scene_absolute_numbering
 
-from lib.dateutil import tz, parser as dateutil_parser
-from lib.unrar2 import RarFile
+from dateutil import tz, parser as dateutil_parser
+from unrar2 import RarFile
 import adba, subliminal
-from lib.trakt import TraktAPI
-from lib.trakt.exceptions import traktException
+from libtrakt import TraktAPI
+from libtrakt.exceptions import traktException
 from versionChecker import CheckVersion
-import babelfish
+
+import requests
+import markdown2
 
 try:
     import json
 except ImportError:
-    from lib import simplejson as json
+    import simplejson as json
 
 try:
     import xml.etree.cElementTree as etree
@@ -91,23 +93,24 @@ class html_entities(CheetahFilter):
             filtered = ''
         elif isinstance(val, str):
             try:
-                filtered = unicode(val).encode('ascii', 'xmlcharrefreplace')
-            except UnicodeDecodeError, UnicodeEncodeError:
+                filtered = unicode(val)
+            except Exception:
                 try:
-                    filtered = unicode(val, chardet.detect(val).get('encoding')).encode('ascii', 'xmlcharrefreplace')
-                except (UnicodeDecodeError, UnicodeEncodeError) as e:
+                    filtered = unicode(val, sickbeard.SYS_ENCODING)
+                except Exception:
                     try:
-                        filtered = unicode(val, sickbeard.SYS_ENCODING).encode('ascii', 'xmlcharrefreplace')
-                    except (UnicodeDecodeError, UnicodeEncodeError) as e:
-                        logger.log(u'Unable to decode using {0}, trying utf-8. Error is: {1}'.format(sickbeard.SYS_ENCODING, ex(e)), logger.DEBUG)
+                        filtered = unicode(val, 'utf-8')
+                    except Exception:
                         try:
-                            filtered = unicode(val, 'utf-8').encode('ascii', 'xmlcharrefreplace')
-                        except (UnicodeDecodeError, UnicodeEncodeError) as e:
-                            try:
-                                logger.log(u'Unable to decode using utf-8, trying latin-1. Error is: {1}'.format(ex(e)), logger.DEBUG)
-                                filtered = unicode(val, 'latin-1').encode('ascii', 'xmlcharrefreplace')
-                            except UnicodeDecodeError, UnicodeEncodeError:
-                                logger.log(u'Unable to decode using latin-1, Error is {0}.'.format(ex(e)),logger.ERROR)
+                            filtered = unicode(val, 'latin-1')
+                        except Exception:
+                            logger.log(u'Unable to decode using %s, utf-8, or latin-1. Falling back to chardet!' %
+                                    sickbeard.SYS_ENCODING, logger.ERROR)
+                            filtered = unicode(val, chardet.detect(val).get('encoding'))
+            try:
+                filtered = filtered.encode('ascii', 'xmlcharrefreplace')
+            except Exception:
+                logger.log(u'Unable to encode to ascii using xmlcharrefreplace.', logger.ERROR)
         else:
             filtered = self.filter(str(val))
 
@@ -408,6 +411,18 @@ class WebRoot(WebHandler):
                 static_image_path = os.path.normpath(image_file_name.replace(sickbeard.CACHE_DIR, '/cache'))
 
         static_image_path = static_image_path.replace('\\', '/')
+        return self.redirect(static_image_path)
+
+    def showNetworkLogo(self, show=None):
+        show = sickbeard.helpers.findCertainShow(sickbeard.showList, int(show))
+
+        if show:
+            image_file_name = show.network_logo_name
+        else:
+            image_file_name = 'nonetwork'
+
+        static_image_path = '%s/images/network/%s.png' % (sickbeard.WEB_ROOT, image_file_name)
+
         return self.redirect(static_image_path)
 
     def setHomeLayout(self, layout):
@@ -1005,7 +1020,7 @@ class Home(WebRoot):
    
     def getTraktToken(self, trakt_pin=None):
         
-        trakt_api = TraktAPI(sickbeard.TRAKT_DISABLE_SSL_VERIFY, sickbeard.TRAKT_TIMEOUT)      
+        trakt_api = TraktAPI(sickbeard.SSL_VERIFY, sickbeard.TRAKT_TIMEOUT)
         response = trakt_api.traktToken(trakt_pin)
         if response:
             return "Trakt Authorized"
@@ -2142,6 +2157,63 @@ class Home(WebRoot):
 
         return json.dumps({'result': 'failure'})            
 
+@route('/IRC(/?.*)')
+class HomeIRC(Home):
+    def __init__(self, *args, **kwargs):
+        super(HomeIRC, self).__init__(*args, **kwargs)
+
+    def index(self):
+
+        t = PageTemplate(rh=self, file="IRC.tmpl")
+        t.submenu = self.HomeMenu()
+        t.title = "IRC"
+        t.header = "IRC"
+        t.topmenu = "IRC"
+        return t.respond()
+
+@route('/news(/?.*)')
+class HomeNews(Home):
+    def __init__(self, *args, **kwargs):
+        super(HomeNews, self).__init__(*args, **kwargs)
+
+    def index(self):
+
+        try:
+            news = helpers.getURL('http://sickragetv.github.io/sickrage-news/news.md', session=requests.Session())
+        except Exception:
+            logger.log(u'Could not load news from repo, giving a link!', logger.DEBUG)
+            news = 'Could not load news from the repo. [Click here for news.md](http://sickragetv.github.io/sickrage-news/news.md)'
+
+        t = PageTemplate(rh=self, file="markdown.tmpl")
+        t.submenu = self.HomeMenu()
+        t.title = "News"
+        t.header = "News"
+        t.topmenu = "news"
+        t.data = markdown2.markdown(news)
+
+        return t.respond()
+
+@route('/changes(/?.*)')
+class HomeChangeLog(Home):
+    def __init__(self, *args, **kwargs):
+        super(HomeChangeLog, self).__init__(*args, **kwargs)
+
+    def index(self):
+        try:
+            changes = helpers.getURL('http://sickragetv.github.io/sickrage-news/CHANGES.md', session=requests.Session())
+        except Exception:
+            logger.log(u'Could not load changes from repo, giving a link!', logger.DEBUG)
+            changes = 'Could not load changes from the repo. [Click here for CHANGES.md](http://sickragetv.github.io/sickrage-news/CHANGES.md)'
+
+        t = PageTemplate(rh=self, file="markdown.tmpl")
+        t.submenu = self.HomeMenu()
+        t.title = "Changelog"
+        t.header = "Changelog"
+        t.topmenu = "changes"
+        t.data = markdown2.markdown(changes)
+
+        return t.respond()
+
 @route('/home/postprocess(/?.*)')
 class HomePostProcess(Home):
     def __init__(self, *args, **kwargs):
@@ -2388,7 +2460,7 @@ class HomeAddShows(Home):
 
         t.trending_shows = []
         
-        trakt_api = TraktAPI(sickbeard.TRAKT_DISABLE_SSL_VERIFY, sickbeard.TRAKT_TIMEOUT)
+        trakt_api = TraktAPI(sickbeard.SSL_VERIFY, sickbeard.TRAKT_TIMEOUT)
 
         try:
             not_liked_show = ""
@@ -2449,7 +2521,7 @@ class HomeAddShows(Home):
 
         t.trending_shows = []
 
-        trakt_api = TraktAPI(sickbeard.TRAKT_DISABLE_SSL_VERIFY, sickbeard.TRAKT_TIMEOUT)
+        trakt_api = TraktAPI(sickbeard.SSL_VERIFY, sickbeard.TRAKT_TIMEOUT)
 
         try:
             not_liked_show = ""
@@ -2501,7 +2573,7 @@ class HomeAddShows(Home):
             ]
         }
 
-        trakt_api = TraktAPI(sickbeard.TRAKT_DISABLE_SSL_VERIFY, sickbeard.TRAKT_TIMEOUT)
+        trakt_api = TraktAPI(sickbeard.SSL_VERIFY, sickbeard.TRAKT_TIMEOUT)
 
         result=trakt_api.traktRequest("users/" + sickbeard.TRAKT_USERNAME + "/lists/" + sickbeard.TRAKT_BLACKLIST_NAME + "/items", data, method='POST')
 
@@ -2542,7 +2614,8 @@ class HomeAddShows(Home):
                                                         flatten_folders=sickbeard.FLATTEN_FOLDERS_DEFAULT,
                                                         subtitles=sickbeard.SUBTITLES_DEFAULT,
                                                         anime=sickbeard.ANIME_DEFAULT,
-                                                        scene=sickbeard.SCENE_DEFAULT)
+                                                        scene=sickbeard.SCENE_DEFAULT,
+                                                        default_status_after=sickbeard.STATUS_DEFAULT_AFTER)
 
             ui.notifications.message('Show added', 'Adding the specified show into ' + show_dir)
         else:
@@ -2555,7 +2628,7 @@ class HomeAddShows(Home):
     def addNewShow(self, whichSeries=None, indexerLang=None, rootDir=None, defaultStatus=None,
                    anyQualities=None, bestQualities=None, flatten_folders=None, subtitles=None,
                    fullShowPath=None, other_shows=None, skipShow=None, providedIndexer=None, anime=None,
-                   scene=None, blacklist=None, whitelist=None):
+                   scene=None, blacklist=None, whitelist=None, defaultStatusAfter=None):
         """
         Receive tvdb id, dir, and other options and create a show from them. If extra show dirs are
         provided then it forwards back to newShow, if not it goes to /home.
@@ -2661,7 +2734,7 @@ class HomeAddShows(Home):
         # add the show
         sickbeard.showQueueScheduler.action.addShow(indexer, indexer_id, show_dir, int(defaultStatus), newQuality,
                                                     flatten_folders, indexerLang, subtitles, anime,
-                                                    scene, None, blacklist, whitelist)
+                                                    scene, None, blacklist, whitelist, int(defaultStatusAfter))
         ui.notifications.message('Show added', 'Adding the specified show into ' + show_dir)
 
         return finishAddShow()
@@ -2734,7 +2807,8 @@ class HomeAddShows(Home):
                                                             flatten_folders=sickbeard.FLATTEN_FOLDERS_DEFAULT,
                                                             subtitles=sickbeard.SUBTITLES_DEFAULT,
                                                             anime=sickbeard.ANIME_DEFAULT,
-                                                            scene=sickbeard.SCENE_DEFAULT)
+                                                            scene=sickbeard.SCENE_DEFAULT,
+                                                            default_status_after=sickbeard.STATUS_DEFAULT_AFTER)
                 num_added += 1
 
         if num_added:
@@ -3659,7 +3733,7 @@ class ConfigGeneral(Config):
         sickbeard.ROOT_DIRS = rootDirString
 
     def saveAddShowDefaults(self, defaultStatus, anyQualities, bestQualities, defaultFlattenFolders, subtitles=False,
-                            anime=False, scene=False):
+                            anime=False, scene=False, defaultStatusAfter=WANTED):
 
         if anyQualities:
             anyQualities = anyQualities.split(',')
@@ -3674,6 +3748,7 @@ class ConfigGeneral(Config):
         newQuality = Quality.combineQualities(map(int, anyQualities), map(int, bestQualities))
 
         sickbeard.STATUS_DEFAULT = int(defaultStatus)
+        sickbeard.STATUS_DEFAULT_AFTER = int(defaultStatusAfter)
         sickbeard.QUALITY_DEFAULT = int(newQuality)
 
         sickbeard.FLATTEN_FOLDERS_DEFAULT = config.checkbox_to_value(defaultFlattenFolders)
@@ -3691,7 +3766,7 @@ class ConfigGeneral(Config):
                     web_password=None, version_notify=None, enable_https=None, https_cert=None, https_key=None,
                     handle_reverse_proxy=None, sort_article=None, auto_update=None, notify_on_update=None,
                     proxy_setting=None, proxy_indexers=None, anon_redirect=None, git_path=None, git_remote=None,
-                    calendar_unprotected=None, debug=None, no_restart=None, coming_eps_missed_range=None,
+                    calendar_unprotected=None, debug=None, ssl_verify=None, no_restart=None, coming_eps_missed_range=None,
                     filter_row=None, fuzzy_dating=None, trim_zero=None, date_preset=None, date_preset_na=None, time_preset=None,
                     indexer_timeout=None, download_url=None, rootDir=None, theme_name=None,
                     git_reset=None, git_username=None, git_password=None, git_autoissues=None, display_all_seasons=None):
@@ -3730,6 +3805,7 @@ class ConfigGeneral(Config):
         sickbeard.CALENDAR_UNPROTECTED = config.checkbox_to_value(calendar_unprotected)
         sickbeard.NO_RESTART = config.checkbox_to_value(no_restart)
         sickbeard.DEBUG = config.checkbox_to_value(debug)
+        sickbeard.SSL_VERIFY = config.checkbox_to_value(ssl_verify)
         # sickbeard.LOG_DIR is set in config.change_LOG_DIR()
         sickbeard.COMING_EPS_MISSED_RANGE = config.to_int(coming_eps_missed_range,default=7)
         sickbeard.DISPLAY_ALL_SEASONS = config.checkbox_to_value(display_all_seasons)
@@ -4664,7 +4740,7 @@ class ConfigNotifications(Config):
                           use_trakt=None, trakt_username=None, trakt_pin=None,
                           trakt_remove_watchlist=None, trakt_sync_watchlist=None, trakt_remove_show_from_sickrage=None, trakt_method_add=None,
                           trakt_start_paused=None, trakt_use_recommended=None, trakt_sync=None, trakt_sync_remove=None,
-                          trakt_default_indexer=None, trakt_remove_serieslist=None, trakt_disable_ssl_verify=None, trakt_timeout=None, trakt_blacklist_name=None,
+                          trakt_default_indexer=None, trakt_remove_serieslist=None, trakt_timeout=None, trakt_blacklist_name=None,
                           trakt_use_rolling_download=None, trakt_rolling_num_ep=None, trakt_rolling_add_paused=None, trakt_rolling_frequency=None,
                           use_synologynotifier=None, synologynotifier_notify_onsnatch=None,
                           synologynotifier_notify_ondownload=None, synologynotifier_notify_onsubtitledownload=None,
@@ -4792,7 +4868,6 @@ class ConfigNotifications(Config):
         sickbeard.TRAKT_SYNC = config.checkbox_to_value(trakt_sync)
         sickbeard.TRAKT_SYNC_REMOVE = config.checkbox_to_value(trakt_sync_remove)
         sickbeard.TRAKT_DEFAULT_INDEXER = int(trakt_default_indexer)
-        sickbeard.TRAKT_DISABLE_SSL_VERIFY = config.checkbox_to_value(trakt_disable_ssl_verify)
         sickbeard.TRAKT_TIMEOUT = int(trakt_timeout)
         sickbeard.TRAKT_BLACKLIST_NAME = trakt_blacklist_name
         config.change_TRAKT_USE_ROLLING_DOWNLOAD(trakt_use_rolling_download)
@@ -4867,7 +4942,7 @@ class ConfigSubtitles(Config):
 
     def saveSubtitles(self, use_subtitles=None, subtitles_plugins=None, subtitles_languages=None, subtitles_dir=None,
                       service_order=None, subtitles_history=None, subtitles_finder_frequency=None,
-                      subtitles_multi=None, embedded_subtitles_all=None):
+                      subtitles_multi=None, embedded_subtitles_all=None, subtitles_extra_scripts=None):
 
         results = []
 
@@ -4879,6 +4954,7 @@ class ConfigSubtitles(Config):
         sickbeard.SUBTITLES_HISTORY = config.checkbox_to_value(subtitles_history)
         sickbeard.EMBEDDED_SUBTITLES_ALL = config.checkbox_to_value(embedded_subtitles_all)
         sickbeard.SUBTITLES_MULTI = config.checkbox_to_value(subtitles_multi)
+        sickbeard.SUBTITLES_EXTRA_SCRIPTS = [x.strip() for x in subtitles_extra_scripts.split('|') if x.strip()]
 
         # Subtitles services
         services_str_list = service_order.split()
