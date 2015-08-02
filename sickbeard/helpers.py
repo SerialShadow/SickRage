@@ -50,6 +50,19 @@ import xmltodict
 
 import subprocess
 
+try:
+    from io import BytesIO as _StringIO
+except ImportError:
+    try:
+        from cStringIO import StringIO as _StringIO
+    except ImportError:
+        from StringIO import StringIO as _StringIO
+
+try:
+    import gzip
+except ImportError:
+    gzip = None
+
 from sickbeard.exceptions import MultipleShowObjectsException, ex
 from sickbeard import logger, classes
 from sickbeard.common import USER_AGENT, cpu_presets, mediaExtensions, subtitleExtensions
@@ -1140,7 +1153,7 @@ def extractZip(archive, targetDir):
         if not os.path.exists(targetDir):
             os.mkdir(targetDir)
 
-        zip_file = zipfile.ZipFile(archive, 'r')
+        zip_file = zipfile.ZipFile(archive, 'r', allowZip64=True)
         for member in zip_file.namelist():
             filename = os.path.basename(member)
             # skip directories
@@ -1162,7 +1175,7 @@ def extractZip(archive, targetDir):
 
 def backupConfigZip(fileList, archive, arcname = None):
     try:
-        a = zipfile.ZipFile(archive, 'w', zipfile.ZIP_DEFLATED)
+        a = zipfile.ZipFile(archive, 'w', zipfile.ZIP_DEFLATED, allowZip64=True)
         for f in fileList:
             a.write(f, os.path.relpath(f, arcname))
         a.close()
@@ -1184,7 +1197,7 @@ def restoreConfigZip(archive, targetDir):
             bakFilename = '{0}-{1}'.format(path_leaf(targetDir), datetime.datetime.strftime(datetime.datetime.now(), '%Y%m%d_%H%M%S'))
             shutil.move(targetDir, os.path.join(ntpath.dirname(targetDir), bakFilename))
 
-        zip_file = zipfile.ZipFile(archive, 'r')
+        zip_file = zipfile.ZipFile(archive, 'r', allowZip64=True)
         for member in zip_file.namelist():
             zip_file.extract(member, targetDir)
         zip_file.close()
@@ -1333,56 +1346,6 @@ def _setUpSession(session, headers):
 
     return session
 
-def headURL(url, params=None, headers={}, timeout=30, session=None, json=False, proxyGlypeProxySSLwarning=None):
-    """
-    Checks if URL is valid, without reading it
-    """
-
-    session = _setUpSession(session, headers)
-    session.params = params
-
-    try:
-        resp = session.head(url, timeout=timeout, allow_redirects=True, verify=session.verify)
-
-        if not resp.ok:
-            logger.log(u"Requested headURL " + url + " returned status code is " + str(
-                resp.status_code) + ': ' + codeDescription(resp.status_code), logger.DEBUG)
-            return False
-
-        if proxyGlypeProxySSLwarning is not None:
-            if re.search('The site you are attempting to browse is on a secure connection', resp.text):
-                resp = session.head(proxyGlypeProxySSLwarning, timeout=timeout, allow_redirects=True, verify=session.verify)
-
-                if not resp.ok:
-                    logger.log(u"GlypeProxySSLwarning: Requested headURL " + url + " returned status code is " + str(
-                        resp.status_code) + ': ' + codeDescription(resp.status_code), logger.DEBUG)
-                    return False
-
-        if resp.status_code == 302:
-            return ((resp.headers._store['location'][1].find(u"http://192.168.168.30/spotweb/")) > -1)
-
-        return resp.status_code == 200
-
-    except requests.exceptions.HTTPError as e:
-        logger.log(u"HTTP error in headURL %s. Error: %s" % (url, ex(e)), logger.WARNING)
-        pass
-    except requests.exceptions.ConnectionError as e:
-        logger.log(u"Connection error in headURL %s. Error: %s " % (url, ex(e)), logger.WARNING)
-        pass
-    except requests.exceptions.Timeout as e:
-        logger.log(u"Connection timed out accessing headURL %s. Error: %s" % (url, ex(e)), logger.WARNING)
-        pass
-    except requests.exceptions.ContentDecodingError:
-        logger.log(u"Content-Encoding was gzip, but content was not compressed. headURL: %s" % url, logger.DEBUG)
-        logger.log(traceback.format_exc(), logger.DEBUG)
-        pass
-    except Exception as e:
-        logger.log(u"Unknown exception in headURL %s. Error: %s" % (url, ex(e)), logger.WARNING)
-        logger.log(traceback.format_exc(), logger.WARNING)
-        pass
-
-    return False
-
 
 def getURL(url, post_data=None, params={}, headers={}, timeout=30, session=None, json=False, proxyGlypeProxySSLwarning=None):
     """
@@ -1431,6 +1394,11 @@ def getURL(url, post_data=None, params={}, headers={}, timeout=30, session=None,
         logger.log(u"Unknown exception in getURL %s Error: %s" % (url, ex(e)), logger.WARNING)
         logger.log(traceback.format_exc(), logger.WARNING)
         return
+
+    attempts = 0
+    while(gzip and len(resp.content) > 1 and resp.content[0] == '\x1f' and resp.content[1] == '\x8b' and attempts < 3):
+        attempts += 1
+        resp._content = gzip.GzipFile(fileobj=_StringIO(resp.content)).read()
 
     return resp.content if not json else resp.json()
 

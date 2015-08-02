@@ -1100,7 +1100,7 @@ class CMD_SubtitleSearch(ApiCall):
             return _responds(RESULT_FAILURE, msg='Unable to find subtitles')
 
         # return the correct json value
-        newSubtitles = frozenset(ep_obj.subtitles).difference(previous_subtitles)
+        newSubtitles = frozenset(epObj.subtitles).difference(previous_subtitles)
         if newSubtitles:
             newLangs = [subtitles.fromietf(newSub) for newSub in newSubtitles]
             status = 'New subtitles downloaded: %s' % ', '.join([newLang.name for newLang in newLangs])
@@ -1302,7 +1302,7 @@ class CMD_Backlog(ApiCall):
             showEps = []
 
             sqlResults = myDB.select(
-                "SELECT * FROM tv_episodes WHERE showid = ? ORDER BY season DESC, episode DESC",
+                "SELECT tv_episodes.*, tv_shows.paused FROM tv_episodes INNER JOIN tv_shows ON tv_episodes.showid = tv_shows.indexer_id WHERE showid = ? and paused = 0 ORDER BY season DESC, episode DESC",
                 [curShow.indexerid])
 
             for curResult in sqlResults:

@@ -237,14 +237,6 @@ def pickBestResult(results, show):
                 logger.log(cur_result.name + u" has previously failed, rejecting it")
                 continue
 
-        # Only request HEAD instead of downloading content here, and only after all other checks but before bestresult!
-        # Otherwise we are spamming providers even when searching with cache only. We can validate now, and download later
-        if len(cur_result.url) and cur_result.provider:
-            cur_result.url = cur_result.provider.headURL(cur_result)
-            if not len(cur_result.url):
-                logger.log('Skipping %s, URL check failed. Bad result from provider.' % cur_result.name,logger.INFO) 
-                continue
-
         if cur_result.quality in bestQualities and (not bestResult or bestResult.quality < cur_result.quality or bestResult not in bestQualities):
             bestResult = cur_result
         elif cur_result.quality in anyQualities and (not bestResult or bestResult not in bestQualities) and (not bestResult or bestResult.quality < cur_result.quality):
@@ -397,6 +389,10 @@ def searchForNeededEpisodes():
 
         # pick a single result for each episode, respecting existing results
         for curEp in curFoundResults:
+            if not curEp.show or curEp.show.paused:
+                logger.log(u"Skipping %s because the show is paused " % curEp.prettyName(), logger.DEBUG)
+                continue
+
             bestResult = pickBestResult(curFoundResults[curEp], curEp.show)
 
             # if all results were rejected move on to the next episode
@@ -457,8 +453,8 @@ def searchProviders(show, episodes, manualSearch=False, downCurQuality=False):
         searchCount = 0
         search_mode = curProvider.search_mode
 
-        # Always search for episode when manually searching when in sponly and fallback false
-        if search_mode == 'sponly' and manualSearch == True and curProvider.search_fallback == False:
+        # Always search for episode when manually searching when in sponly
+        if search_mode == 'sponly' and manualSearch == True:
             search_mode = 'eponly'
 
         while(True):
@@ -478,8 +474,6 @@ def searchProviders(show, episodes, manualSearch=False, downCurQuality=False):
                 logger.log(u"Error while searching " + curProvider.name + ", skipping: " + ex(e), logger.ERROR)
                 logger.log(traceback.format_exc(), logger.DEBUG)
                 break
-            finally:
-                threading.currentThread().name = origThreadName
 
             didSearch = True
 
@@ -496,10 +490,10 @@ def searchProviders(show, episodes, manualSearch=False, downCurQuality=False):
                 break
 
             if search_mode == 'sponly':
-                logger.log(u"FALLBACK EPISODE SEARCH INITIATED ...", logger.DEBUG)
+                logger.log(u"Fallback episode search initiated", logger.DEBUG)
                 search_mode = 'eponly'
             else:
-                logger.log(u"FALLBACK SEASON PACK SEARCH INITIATED ...", logger.DEBUG)
+                logger.log(u"Fallback season pack search initiate", logger.DEBUG)
                 search_mode = 'sponly'
 
         # skip to next provider if we have no results to process

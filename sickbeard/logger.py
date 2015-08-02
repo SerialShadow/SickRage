@@ -152,9 +152,22 @@ class Logger(object):
             sys.exit(1)
 
     def submit_errors(self):
-        if not (sickbeard.GIT_USERNAME and sickbeard.GIT_PASSWORD and len(classes.ErrorViewer.errors) > 0):
-            self.log('Please set your GitHub username and password in the config, unable to submit issue ticket to GitHub!')
+        if not (sickbeard.GIT_USERNAME and sickbeard.GIT_PASSWORD and sickbeard.DEBUG and len(classes.ErrorViewer.errors) > 0):
+            self.log('Please set your GitHub username and password in the config and enable debug. Unable to submit issue ticket to GitHub!')
             return
+          
+        try:
+            from versionChecker import CheckVersion
+            checkversion = CheckVersion()
+            needs_update = checkversion.check_for_new_version()
+            commits_behind = checkversion.updater.get_num_commits_behind()
+        except:
+            self.log('Could not check if your SickRage is updated, unable to submit issue ticket to GitHub!')
+            return
+
+        if commits_behind is None or commits_behind > 0:
+            self.log('Please update SickRage, unable to submit issue ticket to GitHub with an outdated version!')
+            return          
 
         if self.submitter_running:
             return 'RUNNING'
@@ -183,11 +196,6 @@ class Logger(object):
 
             # parse and submit errors to issue tracker
             for curError in sorted(classes.ErrorViewer.errors, key=lambda error: error.time, reverse=True)[:500]:
-                #Skip SSL Error, we pointed them to a URL.
-                if re.search('http://git.io/vJrkM', curError.message):
-                    classes.ErrorViewer.errors.remove(curError)
-                    continue
-
                 try:
                     title_Error = str(curError.title)
                     if not len(title_Error) or title_Error == 'None':
@@ -237,7 +245,7 @@ class Logger(object):
                 message += u"_STAFF NOTIFIED_: @SiCKRAGETV/owners @SiCKRAGETV/moderators"
 
                 title_Error = u"[APP SUBMITTED]: " + title_Error
-                reports = gh.get_organization(gh_org).get_repo(gh_repo).get_issues()
+                reports = gh.get_organization(gh_org).get_repo(gh_repo).get_issues(state="all")
 
                 issue_found = False
                 issue_id = 0
