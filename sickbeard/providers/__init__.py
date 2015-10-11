@@ -33,7 +33,6 @@ __all__ = ['womble',
            'nyaatorrents',
            'animenzb',
            'torrentbytes',
-           'animezb',
            'frenchtorrentdb',
            'freshontv',
            'titansoftv',
@@ -53,10 +52,14 @@ __all__ = ['womble',
            'xthor',
            'scenetime',
            'btdigg',
+           'strike',
+           'transmitthenet',
+           'tvchaosuk',
+           'torrentproject',
+           'extratorrent'
 ]
 
 import sickbeard
-import generic
 
 from sickbeard import logger
 from os import sys

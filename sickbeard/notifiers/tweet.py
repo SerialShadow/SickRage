@@ -19,7 +19,7 @@
 import sickbeard
 
 from sickbeard import logger, common
-from sickbeard.exceptions import ex
+from sickrage.helper.exceptions import ex
 
 # parse_qsl moved to urlparse module in v2.6
 try:
@@ -51,7 +51,7 @@ class TwitterNotifier:
     def notify_subtitle_download(self, ep_name, lang):
         if sickbeard.TWITTER_NOTIFY_ONSUBTITLEDOWNLOAD:
             self._notifyTwitter(common.notifyStrings[common.NOTIFY_SUBTITLE_DOWNLOAD] + ' ' + ep_name + ": " + lang)
-            
+
     def notify_git_update(self, new_version = "??"):
         if sickbeard.USE_TWITTER:
             update_text=common.notifyStrings[common.NOTIFY_GIT_UPDATE_TEXT]
@@ -135,13 +135,35 @@ class TwitterNotifier:
 
         return True
 
+    def _send_dm(self, message=None):
+
+        username = self.consumer_key
+        password = self.consumer_secret
+        dmdest = sickbeard.TWITTER_DMTO
+        access_token_key = sickbeard.TWITTER_USERNAME
+        access_token_secret = sickbeard.TWITTER_PASSWORD
+
+        logger.log(u"Sending DM: " + dmdest + " " + message, logger.DEBUG)
+
+        api = twitter.Api(username, password, access_token_key, access_token_secret)
+
+        try:
+            api.PostDirectMessage(dmdest, message.encode('utf8'))
+        except Exception, e:
+            logger.log(u"Error Sending Tweet (DM): " + ex(e), logger.ERROR)
+            return False
+
+        return True
+
     def _notifyTwitter(self, message='', force=False):
         prefix = sickbeard.TWITTER_PREFIX
 
         if not sickbeard.USE_TWITTER and not force:
             return False
 
-        return self._send_tweet(prefix + ": " + message)
-
+        if sickbeard.TWITTER_USEDM and sickbeard.TWITTER_DMTO:
+            return self._send_dm(prefix + ": " + message)
+        else:
+            return self._send_tweet(prefix + ": " + message)
 
 notifier = TwitterNotifier

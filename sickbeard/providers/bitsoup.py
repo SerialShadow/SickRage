@@ -1,7 +1,7 @@
 # Author: Idan Gutman
 # URL: http://code.google.com/p/sickbeard/
 #
-# This file is part of SickRage.
+# This file is part of SickRage. 
 #
 # SickRage is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -21,9 +21,6 @@ import traceback
 import datetime
 import sickbeard
 import generic
-import requests
-from requests import exceptions
-import urllib
 
 from sickbeard.common import Quality
 from sickbeard import logger
@@ -32,26 +29,27 @@ from sickbeard import db
 from sickbeard import classes
 from sickbeard import helpers
 from sickbeard import show_name_helpers
-from sickbeard.exceptions import ex, AuthException
 from sickbeard.helpers import sanitizeSceneName
 from sickbeard.bs4_parser import BS4Parser
-from unidecode import unidecode
+from sickrage.helper.exceptions import AuthException
 
 
 class BitSoupProvider(generic.TorrentProvider):
     def __init__(self):
         generic.TorrentProvider.__init__(self, "BitSoup")
 
-        self.urls = {'base_url': 'https://www.bitsoup.me',
-                'login': 'https://www.bitsoup.me/takelogin.php',
-                'detail': 'https://www.bitsoup.me/details.php?id=%s',
-                'search': 'https://www.bitsoup.me/browse.php?search=%s%s',
-                'download': 'https://bitsoup.me/%s',
-        }
+        self.urls = {
+            'base_url': 'https://www.bitsoup.me',
+            'login': 'https://www.bitsoup.me/takelogin.php',
+            'detail': 'https://www.bitsoup.me/details.php?id=%s',
+            'search': 'https://www.bitsoup.me/browse.php',
+            'download': 'https://bitsoup.me/%s',
+            }
 
         self.url = self.urls['base_url']
 
         self.supportsBacklog = True
+        self.public = False
         self.enabled = False
         self.username = None
         self.password = None
@@ -61,96 +59,39 @@ class BitSoupProvider(generic.TorrentProvider):
 
         self.cache = BitSoupCache(self)
 
-        self.categories = "&c42=1&c45=1&c49=1&c7=1"
+        self.search_params = {
+            "c42": 1, "c45": 1, "c49": 1, "c7": 1
+        }
 
     def isEnabled(self):
         return self.enabled
 
-    def imageName(self):
-        return 'bitsoup.png'
-
-    def getQuality(self, item, anime=False):
-
-        quality = Quality.sceneQuality(item[0], anime)
-        return quality
-
     def _checkAuth(self):
         if not self.username or not self.password:
-            raise AuthException("Your authentication credentials for " + self.name + " are missing, check your config.")
+            logger.log(u"Invalid username or password. Check your settings", logger.WARNING)
 
         return True
 
     def _doLogin(self):
 
-        login_params = {'username': self.username,
-                        'password': self.password,
-                        'ssl': 'yes'
-        }
+        login_params = {
+            'username': self.username,
+            'password': self.password,
+            'ssl': 'yes'
+            }
 
-        if not self.session:
-            self.session = requests.Session()
-
-        try:
-            response = self.session.post(self.urls['login'], data=login_params, timeout=30)
-        except (requests.exceptions.ConnectionError, requests.exceptions.HTTPError), e:
-            logger.log(u'Unable to connect to ' + self.name + ' provider: ' + ex(e), logger.ERROR)
+        response = self.getURL(self.urls['login'],  post_data=login_params, timeout=30)
+        if not response:
+            logger.log(u"Unable to connect to provider", logger.WARNING)
             return False
 
-        if re.search('Username or password incorrect', response.text):
-            logger.log(u'Invalid username or password for ' + self.name + ' Check your settings', logger.ERROR)
+        if re.search('Username or password incorrect', response):
+            logger.log(u"Invalid username or password. Check your settings", logger.WARNING)
             return False
 
         return True
 
-    def _get_season_search_strings(self, ep_obj):
-
-        search_string = {'Season': []}
-        for show_name in set(show_name_helpers.allPossibleShowNames(self.show)):
-            if ep_obj.show.air_by_date or ep_obj.show.sports:
-                ep_string = show_name + ' ' + str(ep_obj.airdate).split('-')[0]
-            elif ep_obj.show.anime:
-                ep_string = show_name + ' ' + "%d" % ep_obj.scene_absolute_number
-            else:
-                ep_string = show_name + ' S%02d' % int(ep_obj.scene_season)  #1) showName SXX
-
-            search_string['Season'].append(ep_string)
-
-        return [search_string]
-
-    def _get_episode_search_strings(self, ep_obj, add_string=''):
-
-        search_string = {'Episode': []}
-
-        if not ep_obj:
-            return []
-
-        if self.show.air_by_date:
-            for show_name in set(show_name_helpers.allPossibleShowNames(self.show)):
-                ep_string = sanitizeSceneName(show_name) + ' ' + \
-                            str(ep_obj.airdate).replace('-', '|')
-                search_string['Episode'].append(ep_string)
-        elif self.show.sports:
-            for show_name in set(show_name_helpers.allPossibleShowNames(self.show)):
-                ep_string = sanitizeSceneName(show_name) + ' ' + \
-                            str(ep_obj.airdate).replace('-', '|') + '|' + \
-                            ep_obj.airdate.strftime('%b')
-                search_string['Episode'].append(ep_string)
-        elif self.show.anime:
-            for show_name in set(show_name_helpers.allPossibleShowNames(self.show)):
-                ep_string = sanitizeSceneName(show_name) + ' ' + \
-                            "%i" % int(ep_obj.scene_absolute_number)
-                search_string['Episode'].append(ep_string)
-        else:
-            for show_name in set(show_name_helpers.allPossibleShowNames(self.show)):
-                ep_string = show_name_helpers.sanitizeSceneName(show_name) + ' ' + \
-                            sickbeard.config.naming_ep_type[2] % {'seasonnumber': ep_obj.scene_season,
-                                                                  'episodenumber': ep_obj.scene_episode} + ' %s' % add_string
-
-                search_string['Episode'].append(re.sub('\s+', ' ', ep_string))
-
-        return [search_string]
-
-    def _doSearch(self, search_params, search_mode='eponly', epcount=0, age=0, epObj=None):
+    def _doSearch(self, search_strings, search_mode='eponly', epcount=0, age=0, epObj=None):
 
         results = []
         items = {'Season': [], 'Episode': [], 'RSS': []}
@@ -158,17 +99,16 @@ class BitSoupProvider(generic.TorrentProvider):
         if not self._doLogin():
             return results
 
-        for mode in search_params.keys():
-            for search_string in search_params[mode]:
+        for mode in search_strings.keys():
+            logger.log(u"Search Mode: %s" % mode, logger.DEBUG)
+            for search_string in search_strings[mode]:
 
-                if isinstance(search_string, unicode):
-                    search_string = unidecode(search_string)
+                if mode != 'RSS':
+                    logger.log(u"Search string: %s " % search_string, logger.DEBUG)
 
-                searchURL = self.urls['search'] % (urllib.quote(search_string), self.categories)
+                self.search_params['search'] = search_string
 
-                logger.log(u"Search string: " + searchURL, logger.DEBUG)
-
-                data = self.getURL(searchURL)
+                data = self.getURL(self.urls['search'], params=self.search_params)
                 if not data:
                     continue
 
@@ -179,8 +119,7 @@ class BitSoupProvider(generic.TorrentProvider):
 
                         #Continue only if one Release is found
                         if len(torrent_rows) < 2:
-                             logger.log(u"The Data returned from " + self.name + " do not contains any torrent",
-                                 logger.DEBUG)
+                             logger.log(u"Data returned from provider does not contain any torrents", logger.DEBUG)
                              continue
 
                         for result in torrent_rows[1:]:
@@ -198,42 +137,35 @@ class BitSoupProvider(generic.TorrentProvider):
                                 id = int(id)
                                 seeders = int(cells[10].getText())
                                 leechers = int(cells[11].getText())
+                                #FIXME
+                                size = -1
                             except (AttributeError, TypeError):
                                 continue
 
-                            #Filter unseeded torrent
-                            if mode != 'RSS' and (seeders < self.minseed or leechers < self.minleech):
+                            if not all([title, download_url]):
                                 continue
 
-                            if not title or not download_url:
+                                #Filter unseeded torrent
+                            if seeders < self.minseed or leechers < self.minleech:
+                                if mode != 'RSS':
+                                    logger.log(u"Discarding torrent because it doesn't meet the minimum seeders or leechers: {0} (S:{1} L:{2})".format(title, seeders, leechers), logger.DEBUG)
                                 continue
 
-                            item = title, download_url, id, seeders, leechers
-                            logger.log(u"Found result: " + title.replace(' ','.') + " (" + searchURL + ")", logger.DEBUG)
+                            item = title, download_url, size, seeders, leechers
+                            if mode != 'RSS':
+                                logger.log(u"Found result: %s " % title, logger.DEBUG)
 
                             items[mode].append(item)
 
                 except Exception, e:
-                    logger.log(u"Failed parsing " + self.name + " Traceback: " + traceback.format_exc(), logger.ERROR)
+                    logger.log(u"Failed parsing provider. Traceback: %s" % traceback.format_exc(), logger.ERROR)
 
-            #For each search mode sort all the items by seeders
+            #For each search mode sort all the items by seeders if available
             items[mode].sort(key=lambda tup: tup[3], reverse=True)
 
             results += items[mode]
 
         return results
-
-    def _get_title_and_url(self, item):
-
-        title, url, id, seeders, leechers = item
-
-        if title:
-            title = self._clean_title_from_provider(title)
-
-        if url:
-            url = str(url).replace('&amp;', '&')
-
-        return (title, url)
 
     def findPropers(self, search_date=datetime.datetime.today()):
 
@@ -274,8 +206,8 @@ class BitSoupCache(tvcache.TVCache):
         self.minTime = 20
 
     def _getRSSData(self):
-        search_params = {'RSS': ['']}
-        return {'entries': self.provider._doSearch(search_params)}
+        search_strings = {'RSS': ['']}
+        return {'entries': self.provider._doSearch(search_strings)}
 
 
 provider = BitSoupProvider()

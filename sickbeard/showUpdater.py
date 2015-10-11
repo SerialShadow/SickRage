@@ -17,26 +17,24 @@
 # along with SickRage.  If not, see <http://www.gnu.org/licenses/>.
 
 import datetime
-import os
 import threading
 import sickbeard
 
 from sickbeard import logger
-from sickbeard import exceptions
 from sickbeard import ui
-from sickbeard.exceptions import ex
-from sickbeard import encodingKludge as ek
 from sickbeard import db
 from sickbeard import network_timezones
 from sickbeard import failed_history
+from sickrage.helper.exceptions import CantRefreshShowException, CantUpdateShowException, ex
 
-class ShowUpdater():
+
+class ShowUpdater:
     def __init__(self):
         self.lock = threading.Lock()
         self.amActive = False
 
     def run(self, force=False):
- 
+
         self.amActive = True
 
         update_datetime = datetime.datetime.now()
@@ -76,7 +74,7 @@ class ShowUpdater():
                 if curShow.should_update(update_date=update_date) or curShow.indexerid in stale_should_update:
                     try:
                         piList.append(sickbeard.showQueueScheduler.action.updateShow(curShow, True))  # @UndefinedVariable
-                    except exceptions.CantUpdateException as e:
+                    except CantUpdateShowException as e:
                         logger.log("Unable to update show: {0}".format(str(e)),logger.DEBUG)
                 else:
                     logger.log(
@@ -84,13 +82,13 @@ class ShowUpdater():
                         logger.DEBUG)
                     piList.append(sickbeard.showQueueScheduler.action.refreshShow(curShow, True))  # @UndefinedVariable
 
-            except (exceptions.CantUpdateException, exceptions.CantRefreshException), e:
+            except (CantUpdateShowException, CantRefreshShowException), e:
                 logger.log(u"Automatic update failed: " + ex(e), logger.ERROR)
 
         ui.ProgressIndicators.setIndicator('dailyUpdate', ui.QueueProgressIndicator("Daily Update", piList))
 
         logger.log(u"Completed full update on all shows")
-        
+
         self.amActive = False
 
     def __del__(self):

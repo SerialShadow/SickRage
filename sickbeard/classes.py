@@ -1,5 +1,6 @@
 # Author: Nic Wolfe <nic@wolfeden.ca>
-# URL: http://code.google.com/p/sickbeard/
+# URL: https://sickrage.tv/
+# Git: https://github.com/SiCKRAGETV/SickRage.git
 #
 # This file is part of SickRage.
 #
@@ -17,7 +18,6 @@
 # along with SickRage.  If not, see <http://www.gnu.org/licenses/>.
 import re
 import sys
-import traceback
 
 import sickbeard
 
@@ -26,6 +26,7 @@ import datetime
 from dateutil import parser
 
 from common import USER_AGENT, Quality
+from sickrage.helper.common import dateFormat, dateTimeFormat
 
 
 class SickBeardURLopener(urllib.FancyURLopener):
@@ -36,7 +37,7 @@ class AuthURLOpener(SickBeardURLopener):
     """
     URLOpener class that supports http auth without needing interactive password entry.
     If the provided username/password don't work it simply fails.
-    
+
     user: username to use for HTTP auth
     pw: password to use for HTTP auth
     """
@@ -60,11 +61,11 @@ class AuthURLOpener(SickBeardURLopener):
         # if this is the first try then provide a username/password
         if self.numTries == 0:
             self.numTries = 1
-            return (self.username, self.password)
+            return self.username, self.password
 
         # if we've tried before then return blank which cancels the request
         else:
-            return ('', '')
+            return '', ''
 
     # this is pretty much just a hack for convenience
     def openit(self, url):
@@ -189,9 +190,9 @@ class AllShowsListUI:
                         if searchterm.lower() in name.lower():
                             if 'firstaired' not in curShow:
                                 curShow['firstaired'] = str(datetime.date.fromordinal(1))
-                                curShow['firstaired'] = re.sub("([-]0{2}){1,}", "", curShow['firstaired'])
+                                curShow['firstaired'] = re.sub("([-]0{2})+", "", curShow['firstaired'])
                                 fixDate = parser.parse(curShow['firstaired'], fuzzy=True).date()
-                                curShow['firstaired'] = fixDate.strftime("%Y-%m-%d")
+                                curShow['firstaired'] = fixDate.strftime(dateFormat)
 
                             if curShow not in searchResults:
                                 searchResults += [curShow]
@@ -203,7 +204,7 @@ class ShowListUI:
     """
     This class is for tvdb-api. Instead of prompting with a UI to pick the
     desired result out of a list of shows it tries to be smart about it
-    based on what shows are in SB. 
+    based on what shows are in SickRage.
     """
 
     def __init__(self, config, log=None):
@@ -246,7 +247,7 @@ class Proper:
             self.indexerid) + " from " + str(sickbeard.indexerApi(self.indexer).name)
 
 
-class ErrorViewer():
+class ErrorViewer:
     """
     Keeps a static list of UIErrors to be displayed on the UI and allows
     the list to be cleared.
@@ -270,7 +271,31 @@ class ErrorViewer():
         return ErrorViewer.errors
 
 
-class UIError():
+class WarningViewer:
+    """
+    Keeps a static list of (warning) UIErrors to be displayed on the UI and allows
+    the list to be cleared.
+    """
+
+    errors = []
+
+    def __init__(self):
+        WarningViewer.errors = []
+
+    @staticmethod
+    def add(error):
+        WarningViewer.errors.append(error)
+
+    @staticmethod
+    def clear():
+        WarningViewer.errors = []
+
+    @staticmethod
+    def get():
+        return WarningViewer.errors
+
+
+class UIError:
     """
     Represents an error to be displayed in the web UI.
     """
@@ -278,4 +303,4 @@ class UIError():
     def __init__(self, message):
         self.title = sys.exc_info()[-2] or message
         self.message = message
-        self.time = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        self.time = datetime.datetime.now().strftime(dateTimeFormat)

@@ -1,5 +1,6 @@
 # Author: Nic Wolfe <nic@wolfeden.ca>
-# URL: http://code.google.com/p/sickbeard/
+# URL: https://sickrage.tv
+# Git: https://github.com/SiCKRAGETV/SickRage.git
 #
 # This file is part of SickRage.
 #
@@ -28,22 +29,26 @@ from search import pickBestResult
 import sickbeard
 
 from sickbeard import db
-from sickbeard import exceptions
-from sickbeard.exceptions import ex
 from sickbeard import helpers, logger
 from sickbeard import search
-from sickbeard import history
 
 from sickbeard.common import DOWNLOADED, SNATCHED, SNATCHED_PROPER, Quality, cpu_presets
+from sickrage.helper.exceptions import AuthException, ex
+from sickrage.show.History import History
 
 from name_parser.parser import NameParser, InvalidNameException, InvalidShowException
 
 
-class ProperFinder():
+class ProperFinder:
     def __init__(self):
         self.amActive = False
 
     def run(self, force=False):
+        """
+        Start looking for new propers
+
+        :param force: Start even if already running (currently not used, defaults to False)
+        """
         logger.log(u"Beginning the search for new propers")
 
         self.amActive = True
@@ -68,6 +73,9 @@ class ProperFinder():
         self.amActive = False
 
     def _getProperList(self):
+        """
+        Walk providers for propers
+        """
         propers = {}
 
         search_date = datetime.datetime.today() - datetime.timedelta(days=2)
@@ -82,18 +90,18 @@ class ProperFinder():
 
             try:
                 curPropers = curProvider.findPropers(search_date)
-            except exceptions.AuthException, e:
-                logger.log(u"Authentication error: " + ex(e), logger.ERROR)
+            except AuthException, e:
+                logger.log(u"Authentication error: " + ex(e), logger.DEBUG)
                 continue
             except Exception, e:
-                logger.log(u"Error while searching " + curProvider.name + ", skipping: " + ex(e), logger.ERROR)
+                logger.log(u"Error while searching " + curProvider.name + ", skipping: " + ex(e), logger.DEBUG)
                 logger.log(traceback.format_exc(), logger.DEBUG)
                 continue
 
             # if they haven't been added by a different provider than add the proper to the list
             for x in curPropers:
                 if not re.search('(^|[\. _-])(proper|repack)([\. _-]|$)', x.name, re.I):
-                    logger.log(u'findPropers returned a non-proper, we have caught and skipped it but please report this', logger.WARNING)
+                    logger.log(u'findPropers returned a non-proper, we have caught and skipped it.', logger.DEBUG)
                     continue
 
                 name = self._genericName(x.name)
@@ -201,6 +209,11 @@ class ProperFinder():
         return finalPropers
 
     def _downloadPropers(self, properList):
+        """
+        Download proper (snatch it)
+
+        :param properList:
+        """
 
         for curProper in properList:
 
@@ -213,7 +226,7 @@ class ProperFinder():
                 "WHERE showid = ? AND season = ? AND episode = ? AND quality = ? AND date >= ? " +
                 "AND action IN (" + ",".join([str(x) for x in Quality.SNATCHED + Quality.DOWNLOADED]) + ")",
                 [curProper.indexerid, curProper.season, curProper.episode, curProper.quality,
-                 historyLimit.strftime(history.dateFormat)])
+                 historyLimit.strftime(History.date_format)])
 
             # if we didn't download this episode in the first place we don't know what quality to use for the proper so we can't do it
             if len(historyResults) == 0:
@@ -256,6 +269,11 @@ class ProperFinder():
         return name.replace(".", " ").replace("-", " ").replace("_", " ").lower()
 
     def _set_lastProperSearch(self, when):
+        """
+        Record last propersearch in DB
+
+        :param when: When was the last proper search
+        """
 
         logger.log(u"Setting the last Proper search in the DB to " + str(when), logger.DEBUG)
 
@@ -269,6 +287,9 @@ class ProperFinder():
             myDB.action("UPDATE info SET last_proper_search=" + str(when))
 
     def _get_lastProperSearch(self):
+        """
+        Find last propersearch from DB
+        """
 
         myDB = db.DBConnection()
         sqlResults = myDB.select("SELECT * FROM info")

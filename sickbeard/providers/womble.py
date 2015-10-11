@@ -15,20 +15,18 @@
 #
 # You should have received a copy of the GNU General Public License
 # along with SickRage.  If not, see <http://www.gnu.org/licenses/>.
-import time
 
-import sickbeard
 import generic
 
 from sickbeard import logger
 from sickbeard import tvcache
-from sickbeard.exceptions import AuthException
 
 
 class WombleProvider(generic.NZBProvider):
     def __init__(self):
         generic.NZBProvider.__init__(self, "Womble's Index")
         self.enabled = False
+        self.public = True
         self.cache = WombleCache(self)
         self.urls = {'base_url': 'https://newshost.co.za/'}
         self.url = self.urls['base_url']
@@ -59,7 +57,7 @@ class WombleCache(tvcache.TVCache):
                     self.provider.url + 'rss/?sec=tv-sd&fr=false',
                     self.provider.url + 'rss/?sec=tv-dvd&fr=false',
                     self.provider.url + 'rss/?sec=tv-hd&fr=false']:
-            logger.log(u'Womble\'s Index cache update URL: ' + url, logger.DEBUG)
+            logger.log(u"Cache update URL: %s" % url, logger.DEBUG)
 
             for item in self.getRSSFeed(url)['entries'] or []:
                 ci = self._parseItem(item)
@@ -74,4 +72,3 @@ class WombleCache(tvcache.TVCache):
         return data if data['feed'] and data['feed']['title'] != 'Invalid Link' else None
 
 provider = WombleProvider()
-

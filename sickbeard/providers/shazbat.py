@@ -1,7 +1,7 @@
 # Author: Nic Wolfe <nic@wolfeden.ca>
 # URL: http://code.google.com/p/sickbeard/
 #
-# This file is part of SickRage.
+# This file is part of SickRage. 
 #
 # SickRage is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -16,18 +16,11 @@
 # You should have received a copy of the GNU General Public License
 # along with SickRage.  If not, see <http://www.gnu.org/licenses/>.
 
-try:
-    import xml.etree.cElementTree as etree
-except ImportError:
-    import elementtree.ElementTree as etree
-
-import sickbeard
 import generic
 
-from sickbeard.exceptions import ex, AuthException
-from sickbeard import helpers
 from sickbeard import logger
 from sickbeard import tvcache
+from sickrage.helper.exceptions import AuthException
 
 
 class ShazbatProvider(generic.TorrentProvider):
@@ -36,6 +29,7 @@ class ShazbatProvider(generic.TorrentProvider):
         generic.TorrentProvider.__init__(self, "Shazbat.tv")
 
         self.supportsBacklog = False
+        self.public = False
 
         self.enabled = False
         self.passkey = None
@@ -44,14 +38,12 @@ class ShazbatProvider(generic.TorrentProvider):
 
         self.cache = ShazbatCache(self)
 
-        self.urls = {'base_url': 'http://www.shazbat.tv/'}
-        self.url = self.urls['base_url']
+        self.urls = {'base_url': u'http://www.shazbat.tv/',
+                     'website': u'http://www.shazbat.tv/login',}
+        self.url = self.urls['website']
 
     def isEnabled(self):
         return self.enabled
-
-    def imageName(self):
-        return 'shazbat.png'
 
     def _checkAuth(self):
         if not self.passkey:
@@ -63,9 +55,7 @@ class ShazbatProvider(generic.TorrentProvider):
         if not self.passkey:
             self._checkAuth()
         elif not (data['entries'] and data['feed']):
-            logger.log(u"Incorrect authentication credentials for " + self.name, logger.DEBUG)
-            raise AuthException(
-                u"Your authentication credentials for " + self.name + " are incorrect, check your config")
+            logger.log(u"Invalid username or password. Check your settings", logger.WARNING)
 
         return True
 
@@ -82,8 +72,8 @@ class ShazbatCache(tvcache.TVCache):
 
     def _getRSSData(self):
 
-        rss_url = self.provider.url + 'rss/recent?passkey=' + provider.passkey + '&fname=true'
-        logger.log(self.provider.name + u" cache update URL: " + rss_url, logger.DEBUG)
+        rss_url = self.provider.urls['base_url'] + 'rss/recent?passkey=' + provider.passkey + '&fname=true'
+        logger.log(u"Cache update URL: %s" % rss_url, logger.DEBUG)
 
         return self.getRSSFeed(rss_url, items=['entries', 'feed'])
 

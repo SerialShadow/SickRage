@@ -2,7 +2,7 @@
 #          adaur <adaur.underground@gmail.com>
 # URL: http://code.google.com/p/sickbeard/
 #
-# This file is part of Sick Beard.
+# This file is part of SickRage. 
 #
 # Sick Beard is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -17,21 +17,12 @@
 # You should have received a copy of the GNU General Public License
 # along with Sick Beard.  If not, see <http://www.gnu.org/licenses/>.
 
-import traceback
 import re
 import datetime
-import time
 from requests.auth import AuthBase
 import sickbeard
 import generic
-import urllib
 
-import urllib2
-import requests
-import json
-import cookielib
-
-from requests import exceptions
 from sickbeard.bs4_parser import BS4Parser
 from sickbeard.common import Quality
 from sickbeard import logger
@@ -40,9 +31,7 @@ from sickbeard import show_name_helpers
 from sickbeard import db
 from sickbeard import helpers
 from sickbeard import classes
-from unidecode import unidecode
 from sickbeard.helpers import sanitizeSceneName
-from sickbeard.exceptions import ex
 
 class FrenchTorrentDBProvider(generic.TorrentProvider):
 
@@ -51,52 +40,59 @@ class FrenchTorrentDBProvider(generic.TorrentProvider):
         generic.TorrentProvider.__init__(self, "FrenchTorrentDB")
 
         self.supportsBacklog = True
+        self.public = False
 
-        self.cj = cookielib.CookieJar()
-        self.opener = urllib2.build_opener(urllib2.HTTPCookieProcessor(self.cj))
+        self.urls = {
+            'base_url': 'http://www.frenchtorrentdb.com',
+            }
 
-        self.urls = {'base_url': 'http://www.frenchtorrentdb.com',
-                     'search': 'http://www.frenchtorrentdb.com/?section=TORRENTS&exact=1&name=%s%s&submit=GO',
-                     'login': 'http://www.frenchtorrentdb.com/?section=LOGIN',
-        }
         self.url = self.urls['base_url']
-        self.categories = "&adv_cat%5Bs%5D%5B1%5D=95&adv_cat%5Bs%5D%5B2%5D=190&adv_cat%5Bs%5D%5B3%5D=101&adv_cat%5Bs%5D%5B4%5D=191&adv_cat%5Bs%5D%5B5%5D=197&adv_cat%5Bs%5D%5B7%5D=199&adv_cat%5Bs%5D%5B8%5D=201&adv_cat%5Bs%5D%5B9%5D=128"
+        self.search_params = {
+            "adv_cat%5Bs%5D%5B1%5D": 95,
+            "adv_cat%5Bs%5D%5B2%5D": 190,
+            "adv_cat%5Bs%5D%5B3%5D": 101,
+            "adv_cat%5Bs%5D%5B4%5D": 191,
+            "adv_cat%5Bs%5D%5B5%5D": 197,
+            "adv_cat%5Bs%5D%5B7%5D": 199,
+            "adv_cat%5Bs%5D%5B8%5D": 201,
+            "adv_cat%5Bs%5D%5B9%5D": 128,
+            "section": "TORRENTS",
+            "exact": 1,
+            "submit": "GO"
+            }
+
         self.enabled = False
         self.username = None
         self.password = None
-        self.ratio = None        
+        self.ratio = None
         self.minseed = None
         self.minleech = None
 
     def isEnabled(self):
         return self.enabled
-        
-    def imageName(self):
-        return 'frenchtorrentdb.png'
-        
-    def getQuality(self, item, anime=False):
-        quality = Quality.sceneQuality(item[0], anime)
-        return quality
-        
+
     def _doLogin(self):
 
-        challenge = self.opener.open(self.url + '/?section=LOGIN&challenge=1')
+        params = {
+            "section": "LOGIN",
+            "challenge": 1
+        }
 
-        rawData = challenge.read()
+        data = self.getURL(self.url, params=params, json=True)
 
-        data = json.loads(rawData)
-
-        data = urllib.urlencode({
+        post_data = {
             'username'    : self.username,
             'password'    : self.password,
             'secure_login': self._getSecureLogin(data['challenge']),
             'hash'        : data['hash']
-        })
+            }
 
-        self.opener.open(self.url + '/?section=LOGIN&ajax=1', data).read()
-        
+        params.pop('challenge')
+        params['ajax'] = 1
+        self.getURL(self.url, params=params, post_data=post_data)
+
         return True
-        
+
     def _getSecureLogin(self, challenges):
 
         def fromCharCode(*args):
@@ -119,60 +115,27 @@ class FrenchTorrentDBProvider(generic.TorrentProvider):
             return p
 
         def decodeChallenge(challenge):
-            challenge      = urllib2.unquote(challenge)
-            regexGetArgs   = re.compile('\'([^\']+)\',([0-9]+),([0-9]+),\'([^\']+)\'')
+            regexGetArgs = re.compile('\'([^\']+)\',([0-9]+),([0-9]+),\'([^\']+)\'')
             regexIsEncoded = re.compile('decodeURIComponent')
-            regexUnquote   = re.compile('\'')
-            if (challenge == 'a'):
+            regexUnquote = re.compile('\'')
+            if challenge == 'a':
                 return '05f'
-            if (re.match(regexIsEncoded, challenge) == None):
+            if re.match(regexIsEncoded, challenge) == None:
                 return re.sub(regexUnquote, '', challenge)
             args = re.findall(regexGetArgs, challenge)
-            decoded = decodeString(args[0][0], args[0][1], args[0][2], args[0][3].split('|'), 0, {})
-            return urllib2.unquote(decoded.decode('utf8'))
+            decoded = decodeString(
+                args[0][0], args[0][1],
+                args[0][2], args[0][3].split('|'),
+                0, {})
+            return decoded
 
         secureLogin = ''
         for challenge in challenges:
             secureLogin += decodeChallenge(challenge)
         return secureLogin
-        
-    def _get_episode_search_strings(self, ep_obj, add_string=''):
 
-        search_string = {'Episode': []}
+    def _doSearch(self, search_strings, search_mode='eponly', epcount=0, age=0, epObj=None):
 
-        if not ep_obj:
-            return []
-
-        if self.show.air_by_date:
-            for show_name in set(show_name_helpers.allPossibleShowNames(self.show)):
-                ep_string = sanitizeSceneName(show_name) + '.' + \
-                            str(ep_obj.airdate).replace('-', '|')
-                search_string['Episode'].append(ep_string)
-        elif self.show.sports:
-            for show_name in set(show_name_helpers.allPossibleShowNames(self.show)):
-                ep_string = sanitizeSceneName(show_name) + '.' + \
-                            str(ep_obj.airdate).replace('-', '|') + '|' + \
-                            ep_obj.airdate.strftime('%b')
-                search_string['Episode'].append(ep_string)
-        elif self.show.anime:
-            for show_name in set(show_name_helpers.allPossibleShowNames(self.show)):
-                ep_string = sanitizeSceneName(show_name) + '.' + \
-                            "%i" % int(ep_obj.scene_absolute_number)
-                search_string['Episode'].append(ep_string)
-        else:
-            for show_name in set(show_name_helpers.allPossibleShowNames(self.show)):
-                ep_string = show_name_helpers.sanitizeSceneName(show_name) + '.' + \
-                            sickbeard.config.naming_ep_type[2] % {'seasonnumber': ep_obj.scene_season,
-                                                                  'episodenumber': ep_obj.scene_episode} + ' %s' % add_string
-
-                search_string['Episode'].append(re.sub('\s+', '.', ep_string))
-
-        return [search_string]
-        
-    def _doSearch(self, search_params, search_mode='eponly', epcount=0, age=0, epObj=None):
-
-        logger.log(u"_doSearch started with ..." + str(search_params), logger.DEBUG)
-    
         results = []
         items = {'Season': [], 'Episode': [], 'RSS': []}
 
@@ -180,56 +143,58 @@ class FrenchTorrentDBProvider(generic.TorrentProvider):
         if not self._doLogin():
             return results
 
-        for mode in search_params.keys():
+        for mode in search_strings.keys():
+            logger.log(u"Search Mode: %s" % mode, logger.DEBUG)
+            for search_string in search_strings[mode]:
 
-            for search_string in search_params[mode]:
+                if mode != 'RSS':
+                    logger.log(u"Search string: %s " % search_string, logger.DEBUG)
 
-                if isinstance(search_string, unicode):
-                    search_string = unidecode(search_string)
+                self.search_params['name'] = search_string
 
-                searchURL = self.urls['search'] % (urllib.quote(search_string), self.categories)
-
-                logger.log(u"Search string: " + searchURL, logger.DEBUG)
-
-                r = self.opener.open( searchURL )
+                r = self.getURL(self.url, params=self.search_params)
                 with BS4Parser(r, features=["html5lib", "permissive"]) as html:
-                    resultsTable = html.find("div", { "class" : "DataGrid" })
-                    logger.log(u"Page opened", logger.DEBUG)
+                    resultsTable = html.find("div", {"class": "DataGrid"})
 
                     if resultsTable:
-                        logger.log(u"We have results ", logger.DEBUG)
                         rows = resultsTable.findAll("ul")
 
                         for row in rows:
                             link = row.find("a", title=True)
                             title = link['title']
+                            #FIXME
+                            size = -1
+                            seeders = 1
+                            leechers = 0
 
-                            autogetURL = self.url +'/'+ (row.find("li", { "class" : "torrents_name"}).find('a')['href'][1:]).replace('#FTD_MENU','&menu=4')
-                            r = self.opener.open(autogetURL,'wb').read()
+                            autogetURL = self.url +'/' + (row.find("li", {"class": "torrents_name"}).find('a')['href'][1:]).replace('#FTD_MENU' ,'&menu=4')
+                            r = self.getURL(autogetURL)
                             with BS4Parser(r, features=["html5lib", "permissive"]) as html:
-                                downloadURL = html.find("div", { "class" : "autoget"}).find('a')['href']
-                                item = title, downloadURL
-                                logger.log(u"Download URL : " + downloadURL, logger.DEBUG)
+
+                                download_url = html.find("div", {"class" : "autoget"}).find('a')['href']
+
+                                if not all([title, download_url]):
+                                    continue
+
+                                #Filter unseeded torrent
+                                #if seeders < self.minseed or leechers < self.minleech:
+                                #    if mode != 'RSS':
+                                #        logger.log(u"Discarding torrent because it doesn't meet the minimum seeders or leechers: {0} (S:{1} L:{2})".format(title, seeders, leechers), logger.DEBUG)
+                                #    continue
+
+                                item = title, download_url, size, seeders, leechers
+                                if mode != 'RSS':
+                                    logger.log(u"Found result: %s " % title, logger.DEBUG)
 
                                 items[mode].append(item)
+
+            #For each search mode sort all the items by seeders if available
+            items[mode].sort(key=lambda tup: tup[3], reverse=True)
 
             results += items[mode]
 
         return results
-        
-    def _get_title_and_url(self, item):
 
-        title, url = item
-
-        if title:
-            title = u'' + title
-            title = title.replace(' ', '.')
-
-        if url:
-            url = str(url).replace('&amp;', '&')
-
-        return (title, url)
-        
     def findPropers(self, search_date=datetime.datetime.today()):
 
         results = []
@@ -261,22 +226,6 @@ class FrenchTorrentDBProvider(generic.TorrentProvider):
     def seedRatio(self):
         return self.ratio
 
-
-    def _get_season_search_strings(self, ep_obj):
-
-        search_string = {'Season': []}
-        for show_name in set(show_name_helpers.allPossibleShowNames(self.show)):
-            if ep_obj.show.air_by_date or ep_obj.show.sports:
-                ep_string = show_name + '.' + str(ep_obj.airdate).split('-')[0]
-            elif ep_obj.show.anime:
-                ep_string = show_name + '.' + "%d" % ep_obj.scene_absolute_number
-            else:
-                ep_string = show_name + '.S%02d' % int(ep_obj.scene_season)  # 1) showName.SXX
-
-            search_string['Season'].append(ep_string)
-
-        return [search_string]
-
 class FrenchTorrentDBAuth(AuthBase):
     """Attaches HTTP Authentication to the given Request object."""
     def __init__(self, token):
@@ -295,7 +244,7 @@ class FrenchTorrentDBCache(tvcache.TVCache):
         self.minTime = 10
 
     def _getRSSData(self):
-        search_params = {'RSS': ['']}
-        return {'entries': self.provider._doSearch(search_params)}
+        search_strings = {'RSS': ['']}
+        return {'entries': self.provider._doSearch(search_strings)}
 
 provider = FrenchTorrentDBProvider()

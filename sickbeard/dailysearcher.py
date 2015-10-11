@@ -1,5 +1,6 @@
 # Author: Nic Wolfe <nic@wolfeden.ca>
-# URL: http://code.google.com/p/sickbeard/
+# URL: https://sickrage.tv
+# Git: https://github.com/SiCKRAGETV/SickRage.git
 #
 # This file is part of SickRage.
 #
@@ -20,18 +21,14 @@ from __future__ import with_statement
 
 import datetime
 import threading
-import traceback
 
 import sickbeard
 from sickbeard import logger
 from sickbeard import db
 from sickbeard import common
 from sickbeard import helpers
-from sickbeard import exceptions
-from sickbeard import network_timezones
-from sickbeard.exceptions import ex
-from sickbeard.common import SKIPPED
-from common import Quality, qualityPresetStrings, statusStrings
+from sickbeard import sbdatetime, network_timezones
+from sickrage.helper.exceptions import MultipleShowObjectsException
 
 
 class DailySearcher():
@@ -40,6 +37,11 @@ class DailySearcher():
         self.amActive = False
 
     def run(self, force=False):
+        """
+        Runs the daily searcher, queuing selected episodes for search
+
+        :param force: Force search
+        """
         if self.amActive:
             return
 
@@ -73,14 +75,17 @@ class DailySearcher():
                 if not show or show.paused:
                     continue
 
-            except exceptions.MultipleShowObjectsException:
+            except MultipleShowObjectsException:
                 logger.log(u"ERROR: expected to find a single show matching " + str(sqlEp['showid']))
                 continue
 
             try:
-                end_time = network_timezones.parse_date_time(sqlEp['airdate'], show.airs,
-                                                             show.network) + datetime.timedelta(
+                end_time = sbdatetime.sbdatetime.convert_to_setting(network_timezones.parse_date_time(sqlEp['airdate'], show.airs,
+                                                             show.network)) + datetime.timedelta(
                     minutes=helpers.tryInt(show.runtime, 60))
+                #Keep this for future debug
+                #logger.log(u"Show %s ends at %s and now it is %s. Runtime is %s and airs %s" % (show.name, end_time, curTime, show.runtime, show.airs),logger.DEBUG )
+
                 # filter out any episodes that haven't aried yet
                 if end_time > curTime:
                     continue
@@ -88,15 +93,11 @@ class DailySearcher():
                 # if an error occured assume the episode hasn't aired yet
                 continue
 
-            UpdateWantedList = 0
             ep = show.getEpisode(int(sqlEp["season"]), int(sqlEp["episode"]))
             with ep.lock:
                 if ep.season == 0:
                     logger.log(u"New episode " + ep.prettyName() + " airs today, setting status to SKIPPED because is a special season")
                     ep.status = common.SKIPPED
-                elif sickbeard.TRAKT_USE_ROLLING_DOWNLOAD and sickbeard.USE_TRAKT:
-                    ep.status = common.SKIPPED
-                    UpdateWantedList = 1
                 else:
                     logger.log(u"New episode %s airs today, setting to default episode status for this show: %s" % (ep.prettyName(), common.statusStrings[ep.show.default_ep_status]))
                     ep.status = ep.show.default_ep_status
@@ -108,8 +109,6 @@ class DailySearcher():
             myDB.mass_action(sql_l)
         else:
             logger.log(u"No new released episodes found ...")
-
-        sickbeard.traktRollingScheduler.action.updateWantedList()
 
         # queue episode for daily search
         dailysearch_queue_item = sickbeard.search_queue.DailySearchQueueItem()

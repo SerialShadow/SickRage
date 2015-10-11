@@ -18,30 +18,20 @@
 
 from __future__ import with_statement
 
-import time
 import re
-import urllib, urllib2, urlparse
-import sys
-import os
 import datetime
+from urllib import urlencode
 
 import sickbeard
-import generic
-from sickbeard.common import Quality, cpu_presets
-from sickbeard.name_parser.parser import NameParser, InvalidNameException, InvalidShowException
+from sickbeard.providers import generic
+from sickbeard.common import Quality
+from sickbeard.common import USER_AGENT
 from sickbeard import db
 from sickbeard import classes
 from sickbeard import logger
 from sickbeard import tvcache
 from sickbeard import helpers
-from sickbeard import clients
 from sickbeard.show_name_helpers import allPossibleShowNames, sanitizeSceneName
-from sickbeard.common import Overview
-from sickbeard.exceptions import ex
-from sickbeard import encodingKludge as ek
-import requests
-from requests import exceptions
-from unidecode import unidecode
 
 
 class ThePirateBayProvider(generic.TorrentProvider):
@@ -50,246 +40,114 @@ class ThePirateBayProvider(generic.TorrentProvider):
         generic.TorrentProvider.__init__(self, "ThePirateBay")
 
         self.supportsBacklog = True
+        self.public = True
 
         self.enabled = False
         self.ratio = None
-        self.confirmed = False
+        self.confirmed = True
         self.minseed = None
         self.minleech = None
 
         self.cache = ThePirateBayCache(self)
 
-        self.urls = {'base_url': 'https://thepiratebay.gd/'}
+        self.urls = {
+            'base_url': 'https://thepiratebay.gd/',
+            'search': 'https://thepiratebay.gd/s/',
+            'rss': 'https://thepiratebay.gd/tv/latest'
+        }
 
         self.url = self.urls['base_url']
+        self.headers.update({'User-Agent': USER_AGENT})
 
-        self.searchurl = self.url + 'search/%s/0/7/200' # order by seed
+        """
+        205 = SD, 208 = HD, 200 = All Videos
+        https://thepiratebay.gd/s/?q=Game of Thrones&type=search&orderby=7&page=0&category=200
+        """
+        self.search_params = {
+            'q': '',
+            'type': 'search',
+            'orderby': 7,
+            'page': 0,
+            'category': 200
+        }
 
-        self.re_title_url = '/torrent/(?P<id>\d+)/(?P<title>.*?)//1".+?(?P<url>magnet.*?)//1".+?(?P<seeders>\d+)</td>.+?(?P<leechers>\d+)</td>'
+        self.re_title_url = r'/torrent/(?P<id>\d+)/(?P<title>.*?)//1".+?(?P<url>magnet.*?)//1".+?Size (?P<size>[\d\.]*&nbsp;[TGKMiB]{2,3}).+?(?P<seeders>\d+)</td>.+?(?P<leechers>\d+)</td>'
 
     def isEnabled(self):
         return self.enabled
 
-    def imageName(self):
-        return 'thepiratebay.png'
-
-    def getQuality(self, item, anime=False):
-
-        quality = Quality.sceneQuality(item[0], anime)
-        return quality
-
-    def _reverseQuality(self, quality):
-
-        quality_string = ''
-
-        if quality == Quality.SDTV:
-            quality_string = 'HDTV x264'
-        if quality == Quality.SDDVD:
-            quality_string = 'DVDRIP'
-        elif quality == Quality.HDTV:
-            quality_string = '720p HDTV x264'
-        elif quality == Quality.FULLHDTV:
-            quality_string = '1080p HDTV x264'
-        elif quality == Quality.RAWHDTV:
-            quality_string = '1080i HDTV mpeg2'
-        elif quality == Quality.HDWEBDL:
-            quality_string = '720p WEB-DL h264'
-        elif quality == Quality.FULLHDWEBDL:
-            quality_string = '1080p WEB-DL h264'
-        elif quality == Quality.HDBLURAY:
-            quality_string = '720p Bluray x264'
-        elif quality == Quality.FULLHDBLURAY:
-            quality_string = '1080p Bluray x264'
-
-        return quality_string
-
-    def _find_season_quality(self, title, torrent_id, ep_number):
-        """ Return the modified title of a Season Torrent with the quality found inspecting torrent file list """
-
-        mediaExtensions = ['avi', 'mkv', 'wmv', 'divx',
-                           'vob', 'dvr-ms', 'wtv', 'ts'
-                                                   'ogv', 'rar', 'zip', 'mp4']
-
-        quality = Quality.UNKNOWN
-
-        fileName = None
-
-        fileURL = self.url + 'ajax_details_filelist.php?id=' + str(torrent_id)
-        data = self.getURL(fileURL)
-        if not data:
-            return None
-
-        filesList = re.findall('<td.+>(.*?)</td>', data)
-
-        if not filesList:
-            # disabled errormsg for now
-            # logger.log(u"Unable to get the torrent file list for " + title, logger.ERROR)
-            return None
-
-        videoFiles = filter(lambda x: x.rpartition(".")[2].lower() in mediaExtensions, filesList)
-
-        #Filtering SingleEpisode/MultiSeason Torrent
-        if len(videoFiles) < ep_number or len(videoFiles) > float(ep_number * 1.1):
-            logger.log(
-                u"Result " + title + " have " + str(ep_number) + " episode and episodes retrived in torrent are " + str(
-                    len(videoFiles)), logger.DEBUG)
-            logger.log(u"Result " + title + " Seem to be a Single Episode or MultiSeason torrent, skipping result...",
-                       logger.DEBUG)
-            return None
-
-        if Quality.sceneQuality(title) != Quality.UNKNOWN:
-            return title
-
-        for fileName in videoFiles:
-            quality = Quality.sceneQuality(os.path.basename(fileName))
-            if quality != Quality.UNKNOWN: break
-
-        if fileName is not None and quality == Quality.UNKNOWN:
-            quality = Quality.assumeQuality(os.path.basename(fileName))
-
-        if quality == Quality.UNKNOWN:
-            logger.log(u"Unable to obtain a Season Quality for " + title, logger.DEBUG)
-            return None
-
-        try:
-            myParser = NameParser(showObj=self.show)
-            parse_result = myParser.parse(fileName)
-        except (InvalidNameException, InvalidShowException):
-            return None
-
-        logger.log(u"Season quality for " + title + " is " + Quality.qualityStrings[quality], logger.DEBUG)
-
-        if parse_result.series_name and parse_result.season_number:
-            title = parse_result.series_name + ' S%02d' % int(parse_result.season_number) + ' ' + self._reverseQuality(
-                quality)
-
-        return title
-
-    def _get_season_search_strings(self, ep_obj):
-
-        search_string = {'Season': []}
-        for show_name in set(allPossibleShowNames(self.show)):
-            if ep_obj.show.air_by_date or ep_obj.show.sports:
-                ep_string = show_name + ' ' + str(ep_obj.airdate).split('-')[0]
-                search_string['Season'].append(ep_string)
-                ep_string = show_name + ' Season ' + str(ep_obj.airdate).split('-')[0]
-                search_string['Season'].append(ep_string)
-            elif ep_obj.show.anime:
-                ep_string = show_name + ' ' + "%02d" % ep_obj.scene_absolute_number
-                search_string['Season'].append(ep_string)
-            else:
-                ep_string = show_name + ' S%02d' % int(ep_obj.scene_season)
-                search_string['Season'].append(ep_string)
-                ep_string = show_name + ' Season ' + str(ep_obj.scene_season) + ' -Ep*'
-                search_string['Season'].append(ep_string)
-
-            search_string['Season'].append(ep_string)
-
-        return [search_string]
-
-    def _get_episode_search_strings(self, ep_obj, add_string=''):
-
-        search_string = {'Episode': []}
-
-        if self.show.air_by_date:
-            for show_name in set(allPossibleShowNames(self.show)):
-                ep_string = sanitizeSceneName(show_name) + ' ' + \
-                            str(ep_obj.airdate).replace('-', ' ')
-                search_string['Episode'].append(ep_string)
-        elif self.show.sports:
-            for show_name in set(allPossibleShowNames(self.show)):
-                ep_string = sanitizeSceneName(show_name) + ' ' + \
-                            str(ep_obj.airdate).replace('-', '|') + '|' + \
-                            ep_obj.airdate.strftime('%b')
-                search_string['Episode'].append(ep_string)
-        elif self.show.anime:
-            for show_name in set(allPossibleShowNames(self.show)):
-                ep_string = sanitizeSceneName(show_name) + ' ' + \
-                            "%02i" % int(ep_obj.scene_absolute_number)
-                search_string['Episode'].append(ep_string)
-        else:
-            for show_name in set(allPossibleShowNames(self.show)):
-                ep_string = sanitizeSceneName(show_name) + ' ' + \
-                            sickbeard.config.naming_ep_type[2] % {'seasonnumber': ep_obj.scene_season,
-                                                                  'episodenumber': ep_obj.scene_episode} + '|' + \
-                            sickbeard.config.naming_ep_type[0] % {'seasonnumber': ep_obj.scene_season,
-                                                                  'episodenumber': ep_obj.scene_episode} + ' %s' % add_string
-                search_string['Episode'].append(re.sub('\s+', ' ', ep_string))
-
-        return [search_string]
-
-    def _doSearch(self, search_params, search_mode='eponly', epcount=0, age=0, epObj=None):
+    def _doSearch(self, search_strings, search_mode='eponly', epcount=0, age=0, epObj=None):
 
         results = []
         items = {'Season': [], 'Episode': [], 'RSS': []}
 
-        for mode in search_params.keys():
-            for search_string in search_params[mode]:
-                if isinstance(search_string, unicode):
-                    search_string = unidecode(search_string)
+        for mode in search_strings.keys():
+            logger.log(u"Search Mode: %s" % mode, logger.DEBUG)
+            for search_string in search_strings[mode]:
+
+                self.search_params.update({'q': search_string.strip()})
 
                 if mode != 'RSS':
-                    searchURL = self.searchurl % (urllib.quote(search_string))
-                else:
-                    searchURL = self.url + 'tv/latest/'
+                    logger.log(u"Search string: " + search_string, logger.DEBUG)
 
-                logger.log(u"Search string: " + searchURL, logger.DEBUG)
-
+                searchURL = self.urls[('search', 'rss')[mode == 'RSS']] + '?' + urlencode(self.search_params)
+                logger.log(u"Search URL: %s" % searchURL, logger.DEBUG)
                 data = self.getURL(searchURL)
+                #data = self.getURL(self.urls[('search', 'rss')[mode == 'RSS']], params=self.search_params)
                 if not data:
                     continue
 
                 re_title_url = self.proxy._buildRE(self.re_title_url).replace('&amp;f=norefer', '')
-                matches = re.compile(re_title_url, re.DOTALL).finditer(urllib.unquote(data))
+                matches = re.compile(re_title_url, re.DOTALL).finditer(data)
                 for torrent in matches:
-                    title = torrent.group('title').replace('_',
-                                                           '.')  #Do not know why but SickBeard skip release with '_' in name
-                    url = torrent.group('url')
-                    id = int(torrent.group('id'))
+                    title = torrent.group('title')
+                    download_url = torrent.group('url')
+                    #id = int(torrent.group('id'))
+                    size = self._convertSize(torrent.group('size'))
                     seeders = int(torrent.group('seeders'))
                     leechers = int(torrent.group('leechers'))
+
+                    if not all([title, download_url]):
+                        continue
+
                     #Filter unseeded torrent
-                    if mode != 'RSS' and (seeders < self.minseed or leechers < self.minleech):
+                    if seeders < self.minseed or leechers < self.minleech:
+                        if mode != 'RSS':
+                            logger.log(u"Discarding torrent because it doesn't meet the minimum seeders or leechers: {0} (S:{1} L:{2})".format(title, seeders, leechers), logger.DEBUG)
                         continue
 
-                        #Accept Torrent only from Good People for every Episode Search
-                    if self.confirmed and re.search('(VIP|Trusted|Helper|Moderator)', torrent.group(0)) is None:
-                        logger.log(u"ThePirateBay Provider found result " + torrent.group(
-                            'title') + " but that doesn't seem like a trusted result so I'm ignoring it", logger.DEBUG)
+                    #Accept Torrent only from Good People for every Episode Search
+                    if self.confirmed and re.search(r'(VIP|Trusted|Helper|Moderator)', torrent.group(0)) is None and mode != 'RSS':
+                        logger.log(u"Found result %s but that doesn't seem like a trusted result so I'm ignoring it" % title, logger.DEBUG)
                         continue
 
-                    #Check number video files = episode in season and find the real Quality for full season torrent analyzing files in torrent 
-                    if mode == 'Season' and search_mode == 'sponly':
-                        ep_number = int(epcount / len(set(allPossibleShowNames(self.show))))
-                        title = self._find_season_quality(title, id, ep_number)
-
-                    if not title or not url:
-                        continue
-
-                    item = title, url, id, seeders, leechers
+                    item = title, download_url, size, seeders, leechers
+                    if mode != 'RSS':
+                        logger.log(u"Found result: %s " % title, logger.DEBUG)
 
                     items[mode].append(item)
 
-            #For each search mode sort all the items by seeders
+            #For each search mode sort all the items by seeders if available
             items[mode].sort(key=lambda tup: tup[3], reverse=True)
 
             results += items[mode]
 
         return results
 
-    def _get_title_and_url(self, item):
+    def _convertSize(self, size):
+        size, modifier = size.split('&nbsp;')
+        size = float(size)
+        if modifier in 'KiB':
+            size = size * 1024
+        elif modifier in 'MiB':
+            size = size * 1024**2
+        elif modifier in 'GiB':
+            size = size * 1024**3
+        elif modifier in 'TiB':
+            size = size * 1024**4
+        return size
 
-        title, url, id, seeders, leechers = item
-
-        if title:
-            title = self._clean_title_from_provider(title)
-
-        if url:
-            url = url.replace('&amp;', '&')
-
-        return (title, url)
-
-    def findPropers(self, search_date=datetime.datetime.today()):
+    def findPropers(self, search_date=datetime.datetime.today()-datetime.timedelta(days=1)):
 
         results = []
 
@@ -302,20 +160,14 @@ class ThePirateBayProvider(generic.TorrentProvider):
             ' OR (e.status IN (' + ','.join([str(x) for x in Quality.SNATCHED]) + ')))'
         )
 
-        if not sqlResults:
-            return []
-
-        for sqlshow in sqlResults:
-            self.show = helpers.findCertainShow(sickbeard.showList, int(sqlshow["showid"]))
-
-            if self.show:
-                curEp = self.show.getEpisode(int(sqlshow["season"]), int(sqlshow["episode"]))
-
-                searchString = self._get_episode_search_strings(curEp, add_string='PROPER|REPACK')
-
-                for item in self._doSearch(searchString[0]):
+        for sqlshow in sqlResults or []:
+            show = helpers.findCertainShow(sickbeard.showList, int(sqlshow["showid"]))
+            if show:
+                curEp = show.getEpisode(int(sqlshow["season"]), int(sqlshow["episode"]))
+                searchStrings = self._get_episode_search_strings(curEp, add_string='PROPER|REPACK')
+                for item in self._doSearch(searchStrings[0]):
                     title, url = self._get_title_and_url(item)
-                    results.append(classes.Proper(title, url, datetime.datetime.today(), self.show))
+                    results.append(classes.Proper(title, url, search_date, show))
 
         return results
 
@@ -324,15 +176,15 @@ class ThePirateBayProvider(generic.TorrentProvider):
 
 
 class ThePirateBayCache(tvcache.TVCache):
-    def __init__(self, provider):
+    def __init__(self, provider_obj):
 
-        tvcache.TVCache.__init__(self, provider)
+        tvcache.TVCache.__init__(self, provider_obj)
 
-        # only poll ThePirateBay every 10 minutes max
-        self.minTime = 20
+        # only poll ThePirateBay every 30 minutes max
+        self.minTime = 30
 
     def _getRSSData(self):
-        search_params = {'RSS': ['rss']}
+        search_params = {'RSS': ['']}
         return {'entries': self.provider._doSearch(search_params)}
 
 provider = ThePirateBayProvider()

@@ -23,13 +23,15 @@ import os.path
 
 from sickbeard import db, common, helpers, logger
 
-from sickbeard import encodingKludge as ek
 from sickbeard.name_parser.parser import NameParser, InvalidNameException, InvalidShowException
+from sickrage.helper.common import dateTimeFormat
+from sickrage.helper.encoding import ek
 
-from babelfish import language_converters
+from babelfish import language_converters, Language
 
 MIN_DB_VERSION = 9  # oldest db version we support migrating from
 MAX_DB_VERSION = 42
+
 
 class MainSanityCheck(db.DBSanityCheck):
     def check(self):
@@ -43,6 +45,87 @@ class MainSanityCheck(db.DBSanityCheck):
         self.fix_invalid_airdates()
         self.fix_subtitles_codes()
         self.fix_show_nfo_lang()
+        self.convert_tvrage_to_tvdb()
+        self.convert_archived_to_compund()
+
+
+    def convert_archived_to_compund(self):
+        logger.log(u'Checking for archived episodes not qualified', logger.DEBUG)
+
+        query = "SELECT episode_id, showid, status, location, season, episode " + \
+        "FROM tv_episodes WHERE status = %s" % common.ARCHIVED
+
+        sqlResults = self.connection.select(query)
+        if sqlResults:
+            logger.log(u"Found %i shows with bare archived status, attempting automatic conversion..." % len(sqlResults), logger.WARNING)
+
+        for archivedEp in sqlResults:
+            fixedStatus = common.Quality.compositeStatus(common.ARCHIVED, common.Quality.UNKNOWN)
+            existing = archivedEp['location'] and ek(os.path.exists, archivedEp['location'])
+            if existing:
+                quality = common.Quality.assumeQuality(archivedEp['location'])
+                fixedStatus = common.Quality.compositeStatus(common.ARCHIVED, quality)
+
+            logger.log(u'Changing status from %s to %s for %s: S%02dE%02d at %s (File %s)' %
+                (common.statusStrings[common.ARCHIVED], common.statusStrings[fixedStatus],
+                 archivedEp['showid'], archivedEp['season'], archivedEp['episode'],
+                 archivedEp['location'] if archivedEp['location'] else 'unknown location', ('NOT FOUND', 'EXISTS')[bool(existing)]))
+
+            self.connection.action("UPDATE tv_episodes SET status = %i WHERE episode_id = %i" % (fixedStatus, archivedEp['episode_id']))
+
+    def convert_tvrage_to_tvdb(self):
+        logger.log(u"Checking for shows with tvrage id's, since tvrage is gone", logger.DEBUG)
+        from sickbeard.indexers.indexer_config import INDEXER_TVRAGE
+        from sickbeard.indexers.indexer_config import INDEXER_TVDB
+
+        sqlResults = self.connection.select("SELECT indexer_id, show_name, location FROM tv_shows WHERE indexer = %i" % INDEXER_TVRAGE)
+
+        if sqlResults:
+            logger.log(u"Found %i shows with TVRage ID's, attempting automatic conversion..." % len(sqlResults), logger.WARNING)
+
+        for tvrage_show in sqlResults:
+            logger.log(u"Processing %s at %s" % (tvrage_show['show_name'], tvrage_show['location']))
+            mapping = self.connection.select("SELECT mindexer_id FROM indexer_mapping WHERE indexer_id=%i AND indexer=%i AND mindexer=%i" %
+                    (tvrage_show['indexer_id'], INDEXER_TVRAGE, INDEXER_TVDB))
+
+            if len(mapping) != 1:
+                logger.log(u"Error mapping show from tvrage to tvdb for %s (%s), found %i mapping results. Cannot convert automatically!" %
+                        (tvrage_show['show_name'], tvrage_show['location'], len(mapping)), logger.WARNING)
+                logger.log(u"Removing the TVRage show and it's episodes from the DB, use 'addExistingShow'", logger.WARNING)
+                self.connection.action("DELETE FROM tv_shows WHERE indexer_id = %i AND indexer = %i" % (tvrage_show['indexer_id'], INDEXER_TVRAGE))
+                self.connection.action("DELETE FROM tv_episodes WHERE showid = %i" % tvrage_show['indexer_id'])
+                continue
+
+            logger.log(u'Checking if there is already a show with id:%i in the show list')
+            duplicate = self.connection.select("SELECT * FROM tv_shows WHERE indexer_id = %i AND indexer = %i" % (mapping[0]['mindexer_id'], INDEXER_TVDB))
+            if duplicate:
+                logger.log(u'Found %s which has the same id as %s, cannot convert automatically so I am pausing %s' %
+                    (duplicate[0]['show_name'], tvrage_show['show_name'], duplicate[0]['show_name']), logger.WARNING)
+                self.connection.action("UPDATE tv_shows SET paused=1 WHERE indexer=%i AND indexer_id=%i" %
+                        (INDEXER_TVDB, duplicate[0]['indexer_id']))
+
+                logger.log(u"Removing %s and it's episodes from the DB" % tvrage_show['show_name'], logger.WARNING)
+                self.connection.action("DELETE FROM tv_shows WHERE indexer_id = %i AND indexer = %i" % (tvrage_show['indexer_id'], INDEXER_TVRAGE))
+                self.connection.action("DELETE FROM tv_episodes WHERE showid = %i" % tvrage_show['indexer_id'])
+                logger.log(u'Manually move the season folders from %s into %s, and delete %s before rescanning %s and unpausing it' %
+                    (tvrage_show['location'], duplicate[0]['location'], tvrage_show['location'], duplicate[0]['show_name']), logger.WARNING)
+                continue
+
+            logger.log('Mapping %s to tvdb id %i' % (tvrage_show['show_name'], mapping[0]['mindexer_id']))
+
+            self.connection.action(
+                "UPDATE tv_shows SET indexer=%i, indexer_id=%i WHERE indexer_id=%i" %
+                    (INDEXER_TVDB, mapping[0]['mindexer_id'], tvrage_show['indexer_id'])
+                )
+
+            logger.log(u'Relinking episodes to show')
+            self.connection.action(
+                "UPDATE tv_episodes SET indexer=%i, showid=%i, indexerid=0 WHERE showid=%i" %
+                    (INDEXER_TVDB, mapping[0]['mindexer_id'], tvrage_show['indexer_id'])
+                )
+
+            logger.log('Please perform a full update on %s' % tvrage_show['show_name'], logger.WARNING)
+
 
     def fix_duplicate_shows(self, column='indexer_id'):
 
@@ -182,7 +265,9 @@ class MainSanityCheck(db.DBSanityCheck):
 
         sqlResults = self.connection.select(
             "SELECT subtitles, episode_id FROM tv_episodes WHERE subtitles != '' AND subtitles_lastsearch < ?;",
-                [datetime.datetime(2015, 7, 15, 17, 20, 44, 326380).strftime("%Y-%m-%d %H:%M:%S")])
+                [datetime.datetime(2015, 7, 15, 17, 20, 44, 326380).strftime(dateTimeFormat)])
+
+        validLanguages = [Language.fromopensubtitles(language).opensubtitles for language in language_converters['opensubtitles'].codes if len(language) == 3]
 
         if not sqlResults:
             return
@@ -194,7 +279,7 @@ class MainSanityCheck(db.DBSanityCheck):
                 (sqlResult['episode_id'], sqlResult['subtitles']), logger.DEBUG)
 
             for subcode in sqlResult['subtitles'].split(','):
-                if not len(subcode) is 3 or not subcode in language_converters['opensubtitles'].codes:
+                if not len(subcode) is 3 or not subcode in validLanguages:
                     logger.log("Fixing subtitle codes for episode_id: %s, invalid code: %s" %
                         (sqlResult['episode_id'], subcode), logger.DEBUG)
                     continue
@@ -202,10 +287,11 @@ class MainSanityCheck(db.DBSanityCheck):
                 langs.append(subcode)
 
             self.connection.action("UPDATE tv_episodes SET subtitles = ?, subtitles_lastsearch = ? WHERE episode_id = ?;",
-                [','.join(langs), datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), sqlResult['episode_id']])
+                [','.join(langs), datetime.datetime.now().strftime(dateTimeFormat), sqlResult['episode_id']])
 
     def fix_show_nfo_lang(self):
         self.connection.action("UPDATE tv_shows SET lang = '' WHERE lang = 0 or lang = '0'")
+
 
 def backupDatabase(version):
     logger.log(u"Backing up database before upgrade")
@@ -288,8 +374,8 @@ class AddSizeAndSceneNameFields(InitialSchema):
                 continue
 
             # if there is no size yet then populate it for us
-            if (not cur_ep["file_size"] or not int(cur_ep["file_size"])) and ek.ek(os.path.isfile, cur_ep["location"]):
-                cur_size = ek.ek(os.path.getsize, cur_ep["location"])
+            if (not cur_ep["file_size"] or not int(cur_ep["file_size"])) and ek(os.path.isfile, cur_ep["location"]):
+                cur_size = ek(os.path.getsize, cur_ep["location"])
                 self.connection.action("UPDATE tv_episodes SET file_size = ? WHERE episode_id = ?",
                                        [cur_size, int(cur_ep["episode_id"])])
 
@@ -308,7 +394,7 @@ class AddSizeAndSceneNameFields(InitialSchema):
                 continue
 
             nzb_name = cur_result["resource"]
-            file_name = ek.ek(os.path.basename, download_results[0]["resource"])
+            file_name = ek(os.path.basename, download_results[0]["resource"])
 
             # take the extension off the filename, it's not needed
             if '.' in file_name:
@@ -353,7 +439,7 @@ class AddSizeAndSceneNameFields(InitialSchema):
         logger.log(u"Adding release name to all episodes with obvious scene filenames")
         for cur_result in empty_results:
 
-            ep_file_name = ek.ek(os.path.basename, cur_result["location"])
+            ep_file_name = ek(os.path.basename, cur_result["location"])
             ep_file_name = os.path.splitext(ep_file_name)[0]
 
             # only want to find real scene names here so anything with a space in it is out
@@ -915,7 +1001,7 @@ class AddAnimeBlacklistWhitelist(AddSceneAbsoluteNumbering):
 
         self.incDBVersion()
 
-class AddSceneAbsoluteNumbering(AddAnimeBlacklistWhitelist):
+class AddSceneAbsoluteNumbering2(AddAnimeBlacklistWhitelist):
     def test(self):
         return self.checkDBVersion() >= 36
 
@@ -927,7 +1013,7 @@ class AddSceneAbsoluteNumbering(AddAnimeBlacklistWhitelist):
 
         self.incDBVersion()
 
-class AddXemRefresh(AddSceneAbsoluteNumbering):
+class AddXemRefresh(AddSceneAbsoluteNumbering2):
     def test(self):
         return self.checkDBVersion() >= 37
 

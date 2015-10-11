@@ -51,14 +51,14 @@ Please follow these guidelines before reporting a bug:
 
 1. **Update to the latest version** &mdash; Check if you can reproduce the issue with the latest version from the `develop` branch.
 
-2. **Use the SickRage Forums search** &mdash; check if the issue has already been reported. If it has been, please comment on the existing issue.
+2. **Use the search on sickrage-issues** &mdash; check if the issue has already been reported. If it has been, please comment on the existing issue.
 
 3. **Provide a means to reproduce the problem** &mdash; Please provide as much details as possible, e.g. SickRage log files (obfuscate apikey/passwords), browser and operating system versions, how you started SickRage, and of course the steps to reproduce the problem. Bugs are always reported in the forums.
 
 
 ### Feature requests
-
-Please follow the bug guidelines above for feature requests, i.e. update to the latest version and search for existing issues before posting a new request. You can submit Feature Requests in the [SickRage Forum](http://sickrage.tv/) as well.
+Please follow the bug guidelines above for feature requests, i.e. update to the latest version and search for existing requests on [FeatHub](http://feathub.com/SiCKRAGETV/SickRage) before posting a new request..
+[![Feature Requests](https://cloud.githubusercontent.com/assets/390379/10127973/045b3a96-6560-11e5-9b20-31a2032956b2.png)](http://feathub.com/SiCKRAGETV/SickRage)
 
 ### Pull requests
 
@@ -103,6 +103,15 @@ Please follow this process; it's the best way to get your work included in the p
    git merge upstream/master
    ```
 
+- Make sure that your develop branch is up to date:
+
+   ```bash
+   # Switch to the develop branch
+   git checkout develop
+   # Pull down any updates
+   git pull
+   ```
+
 - Create a new topic branch to contain your feature, change, or fix:
 
    ```bash
@@ -123,3 +132,16 @@ Please follow this process; it's the best way to get your work included in the p
 - [Open a Pull Request](https://help.github.com/articles/using-pull-requests) with a
     clear title and description.
 
+
+## Code guidelines
+
+### HTML
+- Use tags and elements appropriate for an HTML5 doctype (e.g., self-closing tags)
+- Use bower components for third-party JS when possible. All other files should be local and not link to a CDN
+- Use [WAI-ARIA](https://developer.mozilla.org/en-US/docs/Web/Accessibility/ARIA) attributes in documentation examples to promote accessibility.
+
+### JS
+
+- All non library files should pass full lint tests using the [atom.io js linter](https://atom.io/packages/linter-jshint)
+- 4 spaces (no tabs)
+- Code shoud be readable since it all gets minified after development is finished

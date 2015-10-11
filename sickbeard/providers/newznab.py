@@ -15,6 +15,7 @@
 #
 # You should have received a copy of the GNU General Public License
 # along with SickRage.  If not, see <http://www.gnu.org/licenses/>.
+# pylint: disable=W0703
 
 import urllib
 import time
@@ -23,16 +24,18 @@ import os
 import re
 
 import sickbeard
-import generic
-from sickbeard.common import Quality
 from sickbeard import classes
 from sickbeard import helpers
 from sickbeard import scene_exceptions
-from sickbeard import encodingKludge as ek
 from sickbeard import logger
 from sickbeard import tvcache
 from sickbeard import db
-from sickbeard.exceptions import AuthException
+from sickbeard.common import Quality
+from sickbeard.providers import generic
+from sickrage.helper.encoding import ek
+from sickrage.helper.exceptions import AuthException
+from sickbeard.common import USER_AGENT
+
 
 class NewznabProvider(generic.NZBProvider):
     def __init__(self, name, url, key='0', catIDs='5030,5040', search_mode='eponly', search_fallback=False,
@@ -46,6 +49,8 @@ class NewznabProvider(generic.NZBProvider):
 
         self.url = self.urls['base_url']
 
+        self.headers.update({'User-Agent': USER_AGENT})
+
         self.key = key
 
         self.search_mode = search_mode
@@ -58,6 +63,8 @@ class NewznabProvider(generic.NZBProvider):
             self.needs_auth = False
         else:
             self.needs_auth = True
+
+        self.public = not self.needs_auth
 
         if catIDs:
             self.catIDs = catIDs
@@ -73,12 +80,12 @@ class NewznabProvider(generic.NZBProvider):
     def configStr(self):
         return self.name + '|' + self.url + '|' + self.key + '|' + self.catIDs + '|' + str(
             int(self.enabled)) + '|' + self.search_mode + '|' + str(int(self.search_fallback)) + '|' + str(
-            int(self.enable_daily)) + '|' + str(int(self.enable_backlog))
+                int(self.enable_daily)) + '|' + str(int(self.enable_backlog))
 
     def imageName(self):
-        if ek.ek(os.path.isfile,
-                 ek.ek(os.path.join, sickbeard.PROG_DIR, 'gui', sickbeard.GUI_NAME, 'images', 'providers',
-                       self.getID() + '.png')):
+        if ek(os.path.isfile,
+              ek(os.path.join, sickbeard.PROG_DIR, 'gui', sickbeard.GUI_NAME, 'images', 'providers',
+                 self.getID() + '.png')):
             return self.getID() + '.png'
         return 'newznab.png'
 
@@ -105,23 +112,23 @@ class NewznabProvider(generic.NZBProvider):
 
         try:
             data = self.cache.getRSSFeed("%s/api?%s" % (self.url, urllib.urlencode(params)))
-        except:
+        except Exception:
             logger.log(u"Error getting html for [%s]" %
-                    ("%s/api?%s" % (self.url, '&'.join("%s=%s" % (x,y) for x,y in params.iteritems())) ), logger.DEBUG)
+                       ("%s/api?%s" % (self.url, '&'.join("%s=%s" % (x, y) for x, y in params.iteritems()))), logger.WARNING)
             return (False, return_categories, "Error getting html for [%s]" %
-                    ("%s/api?%s" % (self.url, '&'.join("%s=%s" % (x,y) for x,y in params.iteritems()) )))
+                    ("%s/api?%s" % (self.url, '&'.join("%s=%s" % (x, y) for x, y in params.iteritems()))))
 
         if not self._checkAuthFromData(data):
-            logger.log(u"Error parsing xml for [%s]" % (self.name), logger.DEBUG)
+            logger.log(u"Error parsing xml", logger.DEBUG)
             return False, return_categories, "Error parsing xml for [%s]" % (self.name)
 
         try:
             for category in data.feed.categories:
                 if category.get('name') == 'TV':
-                        return_categories.append(category)
-                        for subcat in category.subcats:
-                            return_categories.append(subcat)
-        except:
+                    return_categories.append(category)
+                    for subcat in category.subcats:
+                        return_categories.append(subcat)
+        except Exception:
             logger.log(u"Error parsing result for [%s]" % (self.name),
                        logger.DEBUG)
             return (False, return_categories, "Error parsing result for [%s]" % (self.name))
@@ -131,52 +138,41 @@ class NewznabProvider(generic.NZBProvider):
     def _get_season_search_strings(self, ep_obj):
 
         to_return = []
-        cur_params = {}
+        params = {}
         if not ep_obj:
             return to_return
 
-        cur_params['maxage'] = (datetime.datetime.now() - datetime.datetime.combine(ep_obj.airdate, datetime.datetime.min.time())).days + 1
+        params['maxage'] = (datetime.datetime.now() - datetime.datetime.combine(ep_obj.airdate, datetime.datetime.min.time())).days + 1
+        params['tvdbid'] = ep_obj.show.indexerid
 
         # season
         if ep_obj.show.air_by_date or ep_obj.show.sports:
             date_str = str(ep_obj.airdate).split('-')[0]
-            cur_params['season'] = date_str
-            cur_params['q'] = date_str.replace('-', '.')
+            params['season'] = date_str
+            params['q'] = date_str.replace('-', '.')
         else:
-            cur_params['season'] = str(ep_obj.scene_season)
+            params['season'] = str(ep_obj.scene_season)
 
-        # search
-        rid = helpers.mapIndexersToShow(ep_obj.show)[2]
-        if rid:
-            cur_params['rid'] = rid
-            cur_params['attrs'] = "rageid"
-            to_return.append(dict(cur_params))
+        save_q = ' ' + params['q'] if 'q' in params else ''
 
-        if 'rid' in cur_params:
-            cur_params.pop('rid')
-            cur_params.pop('attrs')
-
-        save_q = ''
-        if 'q' in cur_params:
-            save_q = ' ' + cur_params['q']
 
         # add new query strings for exceptions
         name_exceptions = list(
             set([ep_obj.show.name] + scene_exceptions.get_scene_exceptions(ep_obj.show.indexerid)))
         for cur_exception in name_exceptions:
-            cur_params['q'] = helpers.sanitizeSceneName(cur_exception) + save_q
-            to_return.append(dict(cur_params))
+            params['q'] = helpers.sanitizeSceneName(cur_exception) + save_q
+            to_return.append(dict(params))
 
         return to_return
 
     def _get_episode_search_strings(self, ep_obj, add_string=''):
         to_return = []
         params = {}
-
         if not ep_obj:
             return to_return
 
         params['maxage'] = (datetime.datetime.now() - datetime.datetime.combine(ep_obj.airdate, datetime.datetime.min.time())).days + 1
+        params['tvdbid'] = ep_obj.show.indexerid
 
         if ep_obj.show.air_by_date or ep_obj.show.sports:
             date_str = str(ep_obj.airdate)
@@ -185,17 +181,6 @@ class NewznabProvider(generic.NZBProvider):
         else:
             params['season'] = ep_obj.scene_season
             params['ep'] = ep_obj.scene_episode
-
-        # search
-        rid = helpers.mapIndexersToShow(ep_obj.show)[2]
-        if rid:
-            params['rid'] = rid
-            params['attrs'] = "rageid"
-            to_return.append(dict(params))
-
-        if 'rid' in params:
-            params.pop('rid')
-            params.pop('attrs')
 
         # add new query strings for exceptions
         name_exceptions = list(
@@ -215,18 +200,15 @@ class NewznabProvider(generic.NZBProvider):
     def _checkAuth(self):
 
         if self.needs_auth and not self.key:
-            logger.log(u"Incorrect authentication credentials for " + self.name + " : " + "API key is missing",
-                       logger.DEBUG)
-            raise AuthException("Your authentication credentials for " + self.name + " are missing, check your config.")
+            logger.log(u"Invalid api key. Check your settings", logger.WARNING)
+            #raise AuthException("Your authentication credentials for " + self.name + " are missing, check your config.")
 
         return True
 
     def _checkAuthFromData(self, data):
 
-        try:
-            data['feed']
-            data['entries']
-        except:return self._checkAuth()
+        if 'feed' not in data or 'entries' not in data:
+            return self._checkAuth()
 
         try:
             bozo = int(data['bozo'])
@@ -235,7 +217,7 @@ class NewznabProvider(generic.NZBProvider):
             err_desc = data['feed']['error']['description']
             if not err_code or err_desc:
                 raise
-        except:
+        except Exception:
             return True
 
         if err_code == 100:
@@ -248,7 +230,7 @@ class NewznabProvider(generic.NZBProvider):
         elif bozo == 1:
             raise Exception(bozo_exception)
         else:
-            logger.log(u"Unknown error given from " + self.name + ": " + err_desc, logger.ERROR)
+            logger.log(u"Unknown error: %s" % err_desc, logger.ERROR)
 
     def _doSearch(self, search_params, search_mode='eponly', epcount=0, age=0, epObj=None):
 
@@ -261,6 +243,7 @@ class NewznabProvider(generic.NZBProvider):
 
         if search_params:
             params.update(search_params)
+            logger.log(u'Search parameters: %s' % repr(search_params), logger.DEBUG)
 
         # category ids
         if self.show and self.show.is_sports:
@@ -283,13 +266,13 @@ class NewznabProvider(generic.NZBProvider):
         if 'lolo.sickbeard.com' in self.url and params['maxage'] < 33:
             params['maxage'] = 33
 
-        while (total >= offset):
+        while total >= offset:
             search_url = self.url + 'api?' + urllib.urlencode(params)
 
-            while((datetime.datetime.now() - self.last_search).seconds < 5):
+            while(datetime.datetime.now() - self.last_search).seconds < 5:
                 time.sleep(1)
 
-            logger.log(u"Search url: " + search_url, logger.DEBUG)
+            logger.log(u"Search url: %s" % search_url, logger.DEBUG)
 
             data = self.cache.getRSSFeed(search_url)
 
@@ -304,10 +287,6 @@ class NewznabProvider(generic.NZBProvider):
 
                 if title and url:
                     results.append(item)
-                else:
-                    logger.log(
-                        u"The data returned from the " + self.name + " is incomplete, this result is unusable",
-                        logger.DEBUG)
 
             # get total and offset attribs
             try:
@@ -330,9 +309,9 @@ class NewznabProvider(generic.NZBProvider):
                 offset = int(params['offset'])
                 # if there are more items available then the amount given in one call, grab some more
                 logger.log(u'%d' % (total - offset) + ' more items to be fetched from provider.' +
-                'Fetching another %d' % int(params['limit']) + ' items.', logger.DEBUG)
+                           'Fetching another %d' % int(params['limit']) + ' items.', logger.DEBUG)
             else:
-                logger.log(u'No more searches needed.', logger.DEBUG)
+                logger.log(u'No more searches needed', logger.DEBUG)
                 break
 
         return results
@@ -360,8 +339,8 @@ class NewznabProvider(generic.NZBProvider):
                 for searchString in searchStrings:
                     for item in self._doSearch(searchString):
                         title, url = self._get_title_and_url(item)
-                        if(re.match(r'.*(REPACK|PROPER).*', title, re.I)):
-                             results.append(classes.Proper(title, url, datetime.datetime.today(), self.show))
+                        if re.match(r'.*(REPACK|PROPER).*', title, re.I):
+                            results.append(classes.Proper(title, url, datetime.datetime.today(), self.show))
 
         return results
 
@@ -379,7 +358,6 @@ class NewznabCache(tvcache.TVCache):
 
         params = {"t": "tvsearch",
                   "cat": self.provider.catIDs + ',5060,5070',
-                  "attrs": "rageid",
                   "maxage": 4,
                  }
 
@@ -391,10 +369,10 @@ class NewznabCache(tvcache.TVCache):
 
         rss_url = self.provider.url + 'api?' + urllib.urlencode(params)
 
-        while((datetime.datetime.now() - self.last_search).seconds < 5):
-                time.sleep(1)
+        while (datetime.datetime.now() - self.last_search).seconds < 5:
+            time.sleep(1)
 
-        logger.log(self.provider.name + " cache update URL: " + rss_url, logger.DEBUG)
+        logger.log("Cache update URL: %s " % rss_url, logger.DEBUG)
         data = self.getRSSFeed(rss_url)
 
         self.last_search = datetime.datetime.now()
@@ -402,6 +380,7 @@ class NewznabCache(tvcache.TVCache):
         return data
 
     def _checkAuth(self, data):
+        # pylint: disable=W0212
         return self.provider._checkAuthFromData(data)
 
     def _parseItem(self, item):
@@ -410,16 +389,9 @@ class NewznabCache(tvcache.TVCache):
         self._checkItemAuth(title, url)
 
         if not title or not url:
-            logger.log(
-                u"The data returned from the " + self.provider.name + " feed is incomplete, this result is unusable",
-                logger.DEBUG)
             return None
 
         tvrageid = 0
-        for attr in item['newznab_attr'] if isinstance(item['newznab_attr'], list) else [item['newznab_attr']]:
-            if attr['name'] == 'tvrageid' or attr['name'] == 'rageid':
-                tvrageid = int(attr['value'] or 0)
-                break
 
-        logger.log(u"Attempting to add item from RSS to cache: " + title, logger.DEBUG)
+        logger.log(u"Attempting to add item from RSS to cache: %s" % title, logger.DEBUG)
         return self._addCacheEntry(title, url, indexer_id=tvrageid)

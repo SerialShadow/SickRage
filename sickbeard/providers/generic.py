@@ -2,7 +2,7 @@
 # Author: Nic Wolfe <nic@wolfeden.ca>
 # URL: http://code.google.com/p/sickbeard/
 #
-# This file is part of SickRage.
+# This file is part of SickRage. 
 #
 # SickRage is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -24,27 +24,29 @@ import os
 import re
 import itertools
 import urllib
-import random
+from random import shuffle
+from base64 import b16encode, b32decode
+
+import requests
+from hachoir_parser import createParser
 
 import sickbeard
-import requests
-
 from sickbeard import helpers, classes, logger, db
-from sickbeard.common import MULTI_EP_RESULT, SEASON_RESULT, USER_AGENT
+from sickbeard.common import MULTI_EP_RESULT, SEASON_RESULT
 from sickbeard import tvcache
-from sickbeard import encodingKludge as ek
-from sickbeard.exceptions import ex
 from sickbeard.name_parser.parser import NameParser, InvalidNameException, InvalidShowException
 from sickbeard.common import Quality
-
-from hachoir_parser import createParser
-from base64 import b16encode, b32decode
+from sickbeard.common import user_agents
+from sickrage.helper.encoding import ek
+from sickrage.helper.exceptions import ex
+from sickbeard import show_name_helpers
 
 class GenericProvider:
     NZB = "nzb"
     TORRENT = "torrent"
 
     def __init__(self, name):
+
         # these need to be set in the subclass
         self.providerType = None
         self.name = name
@@ -53,6 +55,7 @@ class GenericProvider:
         self.proxyGlypeProxySSLwarning = None
         self.urls = {}
         self.url = ''
+        self.public = True
 
         self.show = None
 
@@ -71,24 +74,25 @@ class GenericProvider:
 
         self.session = requests.Session()
 
-        self.headers = {'User-Agent': USER_AGENT}
+        shuffle(user_agents)
+        self.headers = {'User-Agent': user_agents[0]}
 
         self.btCacheURLS = [
-                'http://torcache.net/torrent/{torrent_hash}.torrent',
-                'http://thetorrent.org/torrent/{torrent_hash}.torrent',
-                'http://btdig.com/torrent/{torrent_hash}.torrent',
-                #'http://torrage.com/torrent/{torrent_hash}.torrent',
-                #'http://itorrents.org/torrent/{torrent_hash}.torrent',
-            ]
+            'http://torcache.net/torrent/{torrent_hash}.torrent',
+            'http://thetorrent.org/torrent/{torrent_hash}.torrent',
+            'http://btdig.com/torrent/{torrent_hash}.torrent',
+            # 'http://torrage.com/torrent/{torrent_hash}.torrent',
+            # 'http://itorrents.org/torrent/{torrent_hash}.torrent',
+        ]
 
-        random.shuffle(self.btCacheURLS)
+        shuffle(self.btCacheURLS)
 
     def getID(self):
         return GenericProvider.makeID(self.name)
 
     @staticmethod
     def makeID(name):
-        return re.sub("[^\w\d_]", "_", name.strip().lower())
+        return re.sub(r"[^\w\d_]", "_", name.strip().lower())
 
     def imageName(self):
         return self.getID() + '.png'
@@ -135,10 +139,6 @@ class GenericProvider:
         for providers with special URL requirements (like cookies)
         """
 
-        # check for auth
-        if not self._doLogin():
-            return
-
         if self.proxy.isEnabled():
             self.headers.update({'Referer': self.proxy.getProxyURL()})
             self.proxyGlypeProxySSLwarning = self.proxy.getProxyURL() + 'includes/process.php?action=sslagree&submit=Continue anyway...'
@@ -156,7 +156,7 @@ class GenericProvider:
         filename = u''
         if result.url.startswith('magnet'):
             try:
-                torrent_hash = re.findall('urn:btih:([\w]{32,40})', result.url)[0].upper()
+                torrent_hash = re.findall(r'urn:btih:([\w]{32,40})', result.url)[0].upper()
 
                 try:
                     torrent_name = re.findall('dn=([^&]+)', result.url)[0]
@@ -168,25 +168,24 @@ class GenericProvider:
 
                 if not torrent_hash:
                     logger.log("Unable to extract torrent hash from magnet: " + ex(result.url), logger.ERROR)
-                    return (urls, filename)
+                    return urls, filename
 
                 urls = [x.format(torrent_hash=torrent_hash, torrent_name=torrent_name) for x in self.btCacheURLS]
             except:
                 logger.log("Unable to extract torrent hash or name from magnet: " + ex(result.url), logger.ERROR)
-                return (urls, filename)
+                return urls, filename
         else:
             urls = [result.url]
 
         if self.providerType == GenericProvider.TORRENT:
-            filename = ek.ek(os.path.join, sickbeard.TORRENT_DIR,
-                             helpers.sanitizeFileName(result.name) + '.' + self.providerType)
+            filename = ek(os.path.join, sickbeard.TORRENT_DIR,
+                          helpers.sanitizeFileName(result.name) + '.' + self.providerType)
 
         elif self.providerType == GenericProvider.NZB:
-            filename = ek.ek(os.path.join, sickbeard.NZB_DIR,
-                             helpers.sanitizeFileName(result.name) + '.' + self.providerType)
+            filename = ek(os.path.join, sickbeard.NZB_DIR,
+                          helpers.sanitizeFileName(result.name) + '.' + self.providerType)
 
-        return (urls, filename)
-
+        return urls, filename
 
     def downloadResult(self, result):
         """
@@ -207,6 +206,10 @@ class GenericProvider:
         for url in urls:
             if 'NO_DOWNLOAD_NAME' in url:
                 continue
+
+            if not self.proxy.isEnabled() and url.startswith('http'):
+                # Let's just set a referer for every .torrent/.nzb, should work as a cover-all without side-effects
+                self.headers.update({'Referer': '/'.join(url.split('/')[:3]) + '/'})
 
             logger.log(u"Downloading a result from " + self.name + " at " + url)
             if helpers.download_file(self.proxy._buildURL(url), filename, session=self.session, headers=self.headers):
@@ -341,8 +344,6 @@ class GenericProvider:
                 # get single episode search results
                 search_strings = self._get_episode_search_strings(epObj)
 
-            if search_strings:
-                logger.log(u'search_strings = %s' % repr(search_strings), logger.DEBUG)
             first = search_strings and isinstance(search_strings[0], dict) and 'rid' in search_strings[0]
             if first:
                 logger.log(u'First search_string has rid', logger.DEBUG)
@@ -546,6 +547,72 @@ class TorrentProvider(GenericProvider):
         GenericProvider.__init__(self, name)
 
         self.providerType = GenericProvider.TORRENT
+
+    def getQuality(self, item, anime=False):
+        quality = Quality.sceneQuality(item[0], anime)
+        return quality
+
+    def _get_title_and_url(self, item):
+
+        title = item[0]
+        download_url = item[1]
+
+        if title:
+            title = self._clean_title_from_provider(title)
+        if download_url:
+            download_url = download_url.replace('&amp;', '&')
+
+        return (title, download_url)
+
+
+    def _get_size(self, item):
+
+        size = item[2]
+        if not size:
+            size = -1
+
+        return size
+
+    def _get_season_search_strings(self, ep_obj):
+
+        search_string = {'Season': []}
+        for show_name in set(show_name_helpers.allPossibleShowNames(self.show)):
+            if ep_obj.show.air_by_date or ep_obj.show.sports:
+                ep_string = show_name + ' ' + str(ep_obj.airdate).split('-')[0]
+            elif ep_obj.show.anime:
+                ep_string = show_name + ' ' + "%d" % ep_obj.scene_absolute_number
+            else:
+                ep_string = show_name + ' S%02d' % int(ep_obj.scene_season)  #1) showName.SXX
+
+            search_string['Season'].append(ep_string)
+
+        return [search_string]
+
+    def _get_episode_search_strings(self, ep_obj, add_string=''):
+
+        search_string = {'Episode': []}
+
+        if not ep_obj:
+            return []
+
+        for show_name in set(show_name_helpers.allPossibleShowNames(ep_obj.show)):
+            ep_string = show_name + ' '
+            if ep_obj.show.air_by_date:
+                ep_string += str(ep_obj.airdate).replace('-', '|')
+            elif ep_obj.show.sports:
+                ep_string += str(ep_obj.airdate).replace('-', '|') + '|' + \
+                        ep_obj.airdate.strftime('%b')
+            elif ep_obj.show.anime:
+                ep_string += "%i" % int(ep_obj.scene_absolute_number)
+            else:
+                ep_string += sickbeard.config.naming_ep_type[2] % {'seasonnumber': ep_obj.scene_season,
+                                                              'episodenumber': ep_obj.scene_episode}
+            if add_string:
+                ep_string = ep_string + ' %s' % add_string
+
+            search_string['Episode'].append(ep_string)
+
+        return [search_string]
 
     def _clean_title_from_provider(self, title):
         if title:

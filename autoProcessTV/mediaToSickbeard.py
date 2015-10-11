@@ -1,4 +1,10 @@
-#!/usr/bin/env python2
+#!/usr/bin/env python2.7
+# DEPRECATION NOTICE: autoProcessTV is deprecated and will be removed
+# from SickRage at 31-10-2015.
+#
+# Please switch to nzbToMedia from Clinton Hall, which is included in
+# the contrib folder
+
 import sys
 import os
 import time
@@ -55,16 +61,16 @@ def utorrent():
 
     dirName = sys.argv[1]
     nzbName = sys.argv[2]
-    
+
     return (dirName, nzbName)
-    
+
 def transmission():
-    
+
     dirName = os.getenv('TR_TORRENT_DIR')
     nzbName = os.getenv('TR_TORRENT_NAME')
-    
+
     return (dirName, nzbName)
-    
+
 def deluge():
 
     if len(sys.argv) < 4:
@@ -72,10 +78,23 @@ def deluge():
         print "No folder supplied - is this being called from Deluge?"
         time.sleep(3)
         sys.exit()
-    
+
     dirName = sys.argv[3]
     nzbName = sys.argv[2]
-    
+
+    return (dirName, nzbName)
+
+def deluged() :
+
+    if len(sys.argv) < 4:
+        scriptlogger.error('No folder supplied - is this being called from Deluge?')
+        print "No folder supplied - is this being called from Deluge?"
+        time.sleep(3)
+        sys.exit()
+
+    dirName = sys.argv[3]
+    nzbName = sys.argv[2]
+
     return (dirName, nzbName)
 
 def blackhole():
@@ -109,10 +128,10 @@ def blackhole():
 #        nzbName = sys.argv[2]
 #    else:
 #        dirName = sys.argv[1]
-#        
-#    return (dirName, nzbName)    
 #
-#def hella():        
+#    return (dirName, nzbName)
+#
+#def hella():
 #    if len(sys.argv) < 4:
 #        scriptlogger.error('No folder supplied - is this being called from HellaVCR?')
 #        print "No folder supplied - is this being called from HellaVCR?"
@@ -120,11 +139,14 @@ def blackhole():
 #    else:
 #        dirName = sys.argv[3]
 #        nzbName = sys.argv[2]
-#        
-#    return (dirName, nzbName)    
+#
+#    return (dirName, nzbName)
 
 def main():
     scriptlogger.info(u'Starting external PostProcess script ' + __file__)
+    scriptlogger.info(u'DEPRECATION NOTICE: autoProcessTV is deprecated and will be removed from SickRage at 31-10-2015. ' + __file__)
+    scriptlogger.info(u'Please switch to nzbToMedia from Clinton Hall, which is included in the contrib folder' + __file__)
+
 
     host = config.get("General", "web_host")
     port = config.get("General", "web_port")
@@ -134,28 +156,28 @@ def main():
         ssl = int(config.get("General", "enable_https"))
     except (ConfigParser.NoOptionError, ValueError):
         ssl = 0
-        
+
     try:
         web_root = config.get("General", "web_root")
     except ConfigParser.NoOptionError:
         web_root = ""
-    
+
     tv_dir = config.get("General", "tv_download_dir")
     use_torrents = int(config.get("General", "use_torrents"))
     torrent_method = config.get("General", "torrent_method")
-    
+
     if not use_torrents:
         scriptlogger.error(u'Enable Use Torrent on Sickbeard to use this Script. Aborting!')
         print u'Enable Use Torrent on Sickbeard to use this Script. Aborting!'
         time.sleep(3)
         sys.exit()
-        
-    if not torrent_method in ['utorrent', 'transmission', 'deluge', 'blackhole']:
+
+    if not torrent_method in ['utorrent', 'transmission', 'deluge', 'deluged', 'blackhole']:
         scriptlogger.error(u'Unknown Torrent Method. Aborting!')
         print u'Unknown Torrent Method. Aborting!'
         time.sleep(3)
         sys.exit()
-    
+
     dirName, nzbName = eval(locals()['torrent_method'])()
 
     if dirName is None:
@@ -172,29 +194,29 @@ def main():
 
     if nzbName and os.path.isdir(os.path.join(dirName, nzbName)):
         dirName = os.path.join(dirName, nzbName)
-        
+
     params = {}
-        
+
     params['quiet'] = 1
-    
+
     params['dir'] = dirName
     if nzbName != None:
         params['nzbName'] = nzbName
-    
+
     if ssl:
         protocol = "https://"
     else:
         protocol = "http://"
-    
+
     if host == '0.0.0.0':
         host = 'localhost'
-    
+
     url = protocol + host + ":" + port + web_root + "/home/postprocess/processEpisode"
     login_url = protocol + host + ":" + port + web_root + "/login"
-    
-    scriptlogger.debug("Opening URL: " + url + ' with params=' + str(params))   
+
+    scriptlogger.debug("Opening URL: " + url + ' with params=' + str(params))
     print "Opening URL: " + url + ' with params=' + str(params)
-    
+
     try:
         sess = requests.Session()
         sess.post(login_url, data={'username': username, 'password': password}, stream=True, verify=False)
@@ -203,18 +225,18 @@ def main():
         scriptlogger.error(u': Unknown exception raised when opening url: ' + str(e))
         time.sleep(3)
         sys.exit()
-    
+
     if response.status_code == 302:
         scriptlogger.error(u'Invalid Sickbeard Username or Password, check your config')
         print 'Invalid Sickbeard Username or Password, check your config'
         time.sleep(3)
         sys.exit()
-    
+
     if response.status_code == 200:
         scriptlogger.info(u'Script ' + __file__ + ' Succesfull')
         print 'Script ' + __file__ + ' Succesfull'
         time.sleep(3)
         sys.exit()
-        
+
 if __name__ == '__main__':
     main()

@@ -19,14 +19,13 @@
 
 from __future__ import with_statement
 
-import unittest
-import sqlite3
-from configobj import ConfigObj
-
 import sys, os.path
 sys.path.insert(1, os.path.abspath(os.path.join(os.path.dirname(__file__), '../lib')))
 sys.path.insert(1, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
+import unittest
+
+from configobj import ConfigObj
 import sickbeard
 
 from sickbeard import providers, tvcache
@@ -209,7 +208,8 @@ def tearDown_test_db():
 #                os.remove(file_name)
 #            except Exception as e:
 #                print 'ERROR: Failed to remove ' + file_name
-#                print ex(e)
+#                print exception(e)
+
 
 def setUp_test_episode_file():
     if not os.path.exists(FILEDIR):

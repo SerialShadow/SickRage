@@ -1,6 +1,6 @@
 # Author: Mr_Orange
 #
-# This file is part of SickRage.
+# This file is part of SickRage. 
 #
 # SickRage is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -15,7 +15,6 @@
 # You should have received a copy of the GNU General Public License
 # along with SickRage.  If not, see <http://www.gnu.org/licenses/>.
 
-
 import os
 import re
 
@@ -23,10 +22,10 @@ import sickbeard
 import generic
 
 from sickbeard import helpers
-from sickbeard import encodingKludge as ek
 from sickbeard import logger
 from sickbeard import tvcache
-from sickbeard.exceptions import ex
+from sickrage.helper.encoding import ek
+from sickrage.helper.exceptions import ex
 
 import requests
 from bencode import bdecode
@@ -65,8 +64,8 @@ class TorrentRssProvider(generic.TorrentProvider):
                                             self.enable_backlog)
 
     def imageName(self):
-        if ek.ek(os.path.isfile,
-                 ek.ek(os.path.join, sickbeard.PROG_DIR, 'gui', sickbeard.GUI_NAME, 'images', 'providers',
+        if ek(os.path.isfile,
+                 ek(os.path.join, sickbeard.PROG_DIR, 'gui', sickbeard.GUI_NAME, 'images', 'providers',
                        self.getID() + '.png')):
             return self.getID() + '.png'
         return 'torrentrss.png'
@@ -137,8 +136,7 @@ class TorrentRssProvider(generic.TorrentProvider):
             return (False, 'Error when trying to load RSS: ' + ex(e))
 
     def dumpHTML(self, data):
-
-        dumpName = ek.ek(os.path.join, sickbeard.CACHE_DIR, 'custom_torrent.html')
+        dumpName = ek(os.path.join, sickbeard.CACHE_DIR, 'custom_torrent.html')
 
         try:
             fileOut = open(dumpName, 'wb')
@@ -146,9 +144,9 @@ class TorrentRssProvider(generic.TorrentProvider):
             fileOut.close()
             helpers.chmodAsParent(dumpName)
         except IOError, e:
-            logger.log("Unable to save the file: " + ex(e), logger.ERROR)
+            logger.log("Unable to save the file: %s " % repr(e), logger.ERROR)
             return False
-        logger.log(u"Saved custom_torrent html dump " + dumpName + " ", logger.INFO)
+        logger.log(u"Saved custom_torrent html dump %s " % dumpName, logger.INFO)
         return True
 
     def seedRatio(self):
@@ -161,7 +159,7 @@ class TorrentRssCache(tvcache.TVCache):
         self.minTime = 15
 
     def _getRSSData(self):
-        logger.log(u"TorrentRssCache cache update URL: " + self.provider.url, logger.DEBUG)
+        logger.log(u"Cache update URL: %s" % self.provider.url, logger.DEBUG)
 
         if self.provider.cookies:
             self.provider.headers.update({'Cookie': self.provider.cookies})
