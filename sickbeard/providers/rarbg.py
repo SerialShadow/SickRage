@@ -2,7 +2,7 @@
 # Author: Nic Wolfe <nic@wolfeden.ca>
 # URL: http://code.google.com/p/sickbeard/
 #
-# This file is part of SickRage. 
+# This file is part of SickRage.
 #
 # SickRage is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -19,22 +19,15 @@
 
 import traceback
 import re
-import generic
 import datetime
 import json
 import time
 
-
-import sickbeard
-from sickbeard.common import Quality, USER_AGENT
 from sickbeard import logger
 from sickbeard import tvcache
-from sickbeard import show_name_helpers
-from sickbeard import db
-from sickbeard import helpers
-from sickbeard import classes
+from sickbeard.providers import generic
+from sickbeard.common import USER_AGENT
 from sickbeard.indexers.indexer_config import INDEXER_TVDB
-from sickrage.helper.exceptions import ex
 
 
 class GetOutOfLoop(Exception):
@@ -46,7 +39,6 @@ class RarbgProvider(generic.TorrentProvider):
     def __init__(self):
         generic.TorrentProvider.__init__(self, "Rarbg")
 
-        self.enabled = False
         self.supportsBacklog = True
         self.public = True
         self.ratio = None
@@ -62,24 +54,24 @@ class RarbgProvider(generic.TorrentProvider):
                      'listing': u'http://torrentapi.org/pubapi_v2.php?mode=list&app_id=sickrage',
                      'search': u'http://torrentapi.org/pubapi_v2.php?mode=search&app_id=sickrage&search_string={search_string}',
                      'search_tvdb': u'http://torrentapi.org/pubapi_v2.php?mode=search&app_id=sickrage&search_tvdb={tvdb}&search_string={search_string}',
-                     'api_spec': u'https://rarbg.com/pubapi/apidocs.txt',
-                     }
+                     'api_spec': u'https://rarbg.com/pubapi/apidocs.txt'}
 
         self.url = self.urls['listing']
 
         self.urlOptions = {'categories': '&category={categories}',
-                        'seeders': '&min_seeders={min_seeders}',
-                        'leechers': '&min_leechers={min_leechers}',
-                        'sorting' : '&sort={sorting}',
-                        'limit': '&limit={limit}',
-                        'format': '&format={format}',
-                        'ranked': '&ranked={ranked}',
-                        'token': '&token={token}',
-        }
+                           'seeders': '&min_seeders={min_seeders}',
+                           'leechers': '&min_leechers={min_leechers}',
+                           'sorting' : '&sort={sorting}',
+                           'limit': '&limit={limit}',
+                           'format': '&format={format}',
+                           'ranked': '&ranked={ranked}',
+                           'token': '&token={token}'}
 
         self.defaultOptions = self.urlOptions['categories'].format(categories='tv') + \
                                 self.urlOptions['limit'].format(limit='100') + \
                                 self.urlOptions['format'].format(format='json_extended')
+
+        self.proper_strings = ['{{PROPER|REPACK}}']
 
         self.next_request = datetime.datetime.now()
 
@@ -161,7 +153,7 @@ class RarbgProvider(generic.TorrentProvider):
                 if self.ranked:
                     searchURL += self.urlOptions['ranked'].format(ranked=int(self.ranked))
 
-                logger.log(u"Search URL: %s" % searchURL, logger.DEBUG) 
+                logger.log(u"Search URL: %s" % searchURL, logger.DEBUG)
 
                 try:
                     retry = 3
@@ -238,7 +230,7 @@ class RarbgProvider(generic.TorrentProvider):
                             seeders = item['seeders']
                             leechers = item['leechers']
                             pubdate = item['pubdate']
-                            
+
                             if not all([title, download_url]):
                                 continue
 
@@ -249,7 +241,7 @@ class RarbgProvider(generic.TorrentProvider):
 
                         except Exception:
                             logger.log(u"Skipping invalid result. JSON item: %s" % item, logger.DEBUG)
- 
+
                 except Exception:
                     logger.log(u"Failed parsing provider. Traceback: %s" % traceback.format_exc(), logger.ERROR)
 
@@ -259,45 +251,17 @@ class RarbgProvider(generic.TorrentProvider):
 
         return results
 
-    def findPropers(self, search_date=datetime.datetime.today()):
-
-        results = []
-
-        myDB = db.DBConnection()
-        sqlResults = myDB.select(
-            'SELECT s.show_name, e.showid, e.season, e.episode, e.status, e.airdate FROM tv_episodes AS e' +
-            ' INNER JOIN tv_shows AS s ON (e.showid = s.indexer_id)' +
-            ' WHERE e.airdate >= ' + str(search_date.toordinal()) +
-            ' AND (e.status IN (' + ','.join([str(x) for x in Quality.DOWNLOADED]) + ')' +
-            ' OR (e.status IN (' + ','.join([str(x) for x in Quality.SNATCHED]) + ')))'
-        )
-
-        if not sqlResults:
-            return []
-
-        for sqlshow in sqlResults:
-            self.show = helpers.findCertainShow(sickbeard.showList, int(sqlshow["showid"]))
-            if self.show:
-                curEp = self.show.getEpisode(int(sqlshow["season"]), int(sqlshow["episode"]))
-                searchString = self._get_episode_search_strings(curEp, add_string='PROPER|REPACK')
-
-                for item in self._doSearch(searchString[0]):
-                    title, url = self._get_title_and_url(item)
-                    results.append(classes.Proper(title, url, datetime.datetime.today(), self.show))
-
-        return results
-
     def seedRatio(self):
         return self.ratio
 
 
 class RarbgCache(tvcache.TVCache):
-    def __init__(self, provider):
+    def __init__(self, provider_obj):
 
-        tvcache.TVCache.__init__(self, provider)
+        tvcache.TVCache.__init__(self, provider_obj)
 
-        # only poll RARbg every 15 minutes max
-        self.minTime = 5
+        # only poll RARBG every 10 minutes max
+        self.minTime = 10
 
     def _getRSSData(self):
         search_params = {'RSS': ['']}

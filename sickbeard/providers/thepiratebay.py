@@ -19,19 +19,12 @@
 from __future__ import with_statement
 
 import re
-import datetime
 from urllib import urlencode
 
-import sickbeard
-from sickbeard.providers import generic
-from sickbeard.common import Quality
-from sickbeard.common import USER_AGENT
-from sickbeard import db
-from sickbeard import classes
 from sickbeard import logger
 from sickbeard import tvcache
-from sickbeard import helpers
-from sickbeard.show_name_helpers import allPossibleShowNames, sanitizeSceneName
+from sickbeard.providers import generic
+from sickbeard.common import USER_AGENT
 
 
 class ThePirateBayProvider(generic.TorrentProvider):
@@ -42,7 +35,6 @@ class ThePirateBayProvider(generic.TorrentProvider):
         self.supportsBacklog = True
         self.public = True
 
-        self.enabled = False
         self.ratio = None
         self.confirmed = True
         self.minseed = None
@@ -51,9 +43,9 @@ class ThePirateBayProvider(generic.TorrentProvider):
         self.cache = ThePirateBayCache(self)
 
         self.urls = {
-            'base_url': 'https://thepiratebay.gd/',
-            'search': 'https://thepiratebay.gd/s/',
-            'rss': 'https://thepiratebay.gd/tv/latest'
+            'base_url': 'https://pirateproxy.la/',
+            'search': 'https://pirateproxy.la/s/',
+            'rss': 'https://pirateproxy.la/tv/latest'
         }
 
         self.url = self.urls['base_url']
@@ -117,8 +109,9 @@ class ThePirateBayProvider(generic.TorrentProvider):
                         continue
 
                     #Accept Torrent only from Good People for every Episode Search
-                    if self.confirmed and re.search(r'(VIP|Trusted|Helper|Moderator)', torrent.group(0)) is None and mode != 'RSS':
-                        logger.log(u"Found result %s but that doesn't seem like a trusted result so I'm ignoring it" % title, logger.DEBUG)
+                    if self.confirmed and re.search(r'(VIP|Trusted|Helper|Moderator)', torrent.group(0)) is None:
+                        if mode != 'RSS':
+                            logger.log(u"Found result %s but that doesn't seem like a trusted result so I'm ignoring it" % title, logger.DEBUG)
                         continue
 
                     item = title, download_url, size, seeders, leechers
@@ -146,30 +139,6 @@ class ThePirateBayProvider(generic.TorrentProvider):
         elif modifier in 'TiB':
             size = size * 1024**4
         return size
-
-    def findPropers(self, search_date=datetime.datetime.today()-datetime.timedelta(days=1)):
-
-        results = []
-
-        myDB = db.DBConnection()
-        sqlResults = myDB.select(
-            'SELECT s.show_name, e.showid, e.season, e.episode, e.status, e.airdate FROM tv_episodes AS e' +
-            ' INNER JOIN tv_shows AS s ON (e.showid = s.indexer_id)' +
-            ' WHERE e.airdate >= ' + str(search_date.toordinal()) +
-            ' AND (e.status IN (' + ','.join([str(x) for x in Quality.DOWNLOADED]) + ')' +
-            ' OR (e.status IN (' + ','.join([str(x) for x in Quality.SNATCHED]) + ')))'
-        )
-
-        for sqlshow in sqlResults or []:
-            show = helpers.findCertainShow(sickbeard.showList, int(sqlshow["showid"]))
-            if show:
-                curEp = show.getEpisode(int(sqlshow["season"]), int(sqlshow["episode"]))
-                searchStrings = self._get_episode_search_strings(curEp, add_string='PROPER|REPACK')
-                for item in self._doSearch(searchStrings[0]):
-                    title, url = self._get_title_and_url(item)
-                    results.append(classes.Proper(title, url, search_date, show))
-
-        return results
 
     def seedRatio(self):
         return self.ratio

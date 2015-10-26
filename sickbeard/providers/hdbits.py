@@ -1,4 +1,4 @@
-# This file is part of SickRage. 
+# This file is part of SickRage.
 #
 # SickRage is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -16,7 +16,7 @@
 import datetime
 import urllib
 
-import generic
+from sickbeard.providers import generic
 
 from sickbeard import classes
 from sickbeard import logger, tvcache
@@ -34,9 +34,8 @@ class HDBitsProvider(generic.TorrentProvider):
         generic.TorrentProvider.__init__(self, "HDBits")
 
         self.supportsBacklog = True
-        self.public = False
 
-        self.enabled = False
+
         self.username = None
         self.passkey = None
         self.ratio = None
@@ -46,8 +45,7 @@ class HDBitsProvider(generic.TorrentProvider):
         self.urls = {'base_url': 'https://hdbits.org',
                      'search': 'https://hdbits.org/api/torrents',
                      'rss': 'https://hdbits.org/api/torrents',
-                     'download': 'https://hdbits.org/download.php?'
-        }
+                     'download': 'https://hdbits.org/download.php?'}
 
         self.url = self.urls['base_url']
 
@@ -89,7 +87,7 @@ class HDBitsProvider(generic.TorrentProvider):
 
     def _doSearch(self, search_params, search_mode='eponly', epcount=0, age=0, epObj=None):
 
-        #FIXME 
+        #FIXME
         results = []
 
         logger.log(u"Search string: %s" %  search_params, logger.DEBUG)
@@ -122,7 +120,7 @@ class HDBitsProvider(generic.TorrentProvider):
                 if item['utadded']:
                     try:
                         result_date = datetime.datetime.fromtimestamp(int(item['utadded']))
-                    except:
+                    except Exception:
                         result_date = None
 
                     if result_date:
@@ -191,9 +189,9 @@ class HDBitsProvider(generic.TorrentProvider):
 
 
 class HDBitsCache(tvcache.TVCache):
-    def __init__(self, provider):
+    def __init__(self, provider_obj):
 
-        tvcache.TVCache.__init__(self, provider)
+        tvcache.TVCache.__init__(self, provider_obj)
 
         # only poll HDBits every 15 minutes max
         self.minTime = 15
@@ -206,7 +204,7 @@ class HDBitsCache(tvcache.TVCache):
 
             if self.provider._checkAuthFromData(parsedJSON):
                 results = parsedJSON['data']
-        except:
+        except Exception:
             pass
 
         return {'entries': results}

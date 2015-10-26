@@ -2,7 +2,7 @@
 # Modified by jkaberg, https://github.com/jkaberg for SceneAccess
 # URL: http://code.google.com/p/sickbeard/
 #
-# This file is part of SickRage. 
+# This file is part of SickRage.
 #
 # SickRage is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -18,23 +18,13 @@
 # along with SickRage.  If not, see <http://www.gnu.org/licenses/>.
 
 import re
-import sickbeard
-import generic
 import urllib
-from sickbeard.common import Quality
+import requests
+from bs4 import BeautifulSoup
+
 from sickbeard import logger
 from sickbeard import tvcache
-from sickbeard import db
-from sickbeard import classes
-from sickbeard import helpers
-from sickbeard import show_name_helpers
-from sickrage.helper.exceptions import AuthException
-import requests
-from BeautifulSoup import BeautifulSoup as soup
-from unidecode import unidecode
-from sickbeard.helpers import sanitizeSceneName
-from datetime import datetime
-import traceback
+from sickbeard.providers import generic
 
 class HDTorrentsProvider(generic.TorrentProvider):
     def __init__(self):
@@ -42,7 +32,6 @@ class HDTorrentsProvider(generic.TorrentProvider):
         generic.TorrentProvider.__init__(self, "HDTorrents")
 
         self.supportsBacklog = True
-        self.public = False
 
         self.username = None
         self.password = None
@@ -54,14 +43,15 @@ class HDTorrentsProvider(generic.TorrentProvider):
                      'login': 'https://hd-torrents.org/login.php',
                      'search': 'https://hd-torrents.org/torrents.php?search=%s&active=1&options=0%s',
                      'rss': 'https://hd-torrents.org/torrents.php?search=&active=1&options=0%s',
-                     'home': 'https://hd-torrents.org/%s'
-        }
+                     'home': 'https://hd-torrents.org/%s'}
 
         self.url = self.urls['base_url']
 
+        self.categories = "&category[]=59&category[]=60&category[]=30&category[]=38"
+        self.proper_strings = ['PROPER', 'REPACK']
+
         self.cache = HDTorrentsCache(self)
 
-        self.categories = "&category[]=59&category[]=60&category[]=30&category[]=38"
 
     def isEnabled(self):
         return self.enabled
@@ -82,7 +72,7 @@ class HDTorrentsProvider(generic.TorrentProvider):
                         'pwd': self.password,
                         'submit': 'Confirm'}
 
-        response = self.getURL(self.urls['login'],  post_data=login_params, timeout=30)
+        response = self.getURL(self.urls['login'], post_data=login_params, timeout=30)
         if not response:
             logger.log(u"Unable to connect to provider", logger.WARNING)
             return False
@@ -106,7 +96,7 @@ class HDTorrentsProvider(generic.TorrentProvider):
             for search_string in search_strings[mode]:
 
                 if mode != 'RSS':
-                    searchURL = self.urls['search'] % (urllib.quote_plus(search_string.replace('.', ' ')), self.categories)
+                    searchURL = self.urls['search'] % (urllib.quote_plus(search_string), self.categories)
                 else:
                     searchURL = self.urls['rss'] % self.categories
 
@@ -115,11 +105,22 @@ class HDTorrentsProvider(generic.TorrentProvider):
                     logger.log(u"Search string: %s" %  search_string, logger.DEBUG)
 
                 data = self.getURL(searchURL)
-                if not data:
+                if not data or 'please try later' in data:
                     logger.log("No data returned from provider", logger.DEBUG)
                     continue
 
-                html = soup(data)
+                # Search result page contains some invalid html that prevents html parser from returning all data.
+                # We cut everything before the table that contains the data we are interested in thus eliminating
+                # the invalid html portions
+                try:
+                    index = data.lower().index('<table class="mainblockcontenttt"')
+                except ValueError:
+                    logger.log(u"Could not find table of torrents mainblockcontenttt", logger.ERROR)
+                    continue
+
+                data = urllib.unquote(data[index:].encode('utf-8')).decode('utf-8')
+
+                html = BeautifulSoup(data, 'html5lib')
                 if not html:
                     logger.log("No html data parsed from provider", logger.DEBUG)
                     continue
@@ -145,29 +146,33 @@ class HDTorrentsProvider(generic.TorrentProvider):
                         if not cells:
                             continue
 
-                        title = download_url = seeders = leechers = None
-                        size = 0
+                        title = download_url = seeders = leechers = size = None
                         for cell in cells:
                             try:
                                 if None is title and cell.get('title') and cell.get('title') in 'Download':
                                     title = re.search('f=(.*).torrent', cell.a['href']).group(1).replace('+', '.')
+                                    title = title.decode('utf-8')
                                     download_url = self.urls['home'] % cell.a['href']
+                                    continue
                                 if None is seeders and cell.get('class')[0] and cell.get('class')[0] in 'green' 'yellow' 'red':
                                     seeders = int(cell.text)
                                     if not seeders:
                                         seeders = 1
+                                        continue
                                 elif None is leechers and cell.get('class')[0] and cell.get('class')[0] in 'green' 'yellow' 'red':
                                     leechers = int(cell.text)
                                     if not leechers:
-                                        seeders = 0
+                                        leechers = 0
+                                        continue
 
                                 # Need size for failed downloads handling
-                                if re.match(r'[0-9]+,?\.?[0-9]* [KkMmGg]+[Bb]+', cells[7].text):
-                                    size = self._convertSize(cells[7].text)
-                                    if not size:
-                                        size = -1
+                                if size is None:
+                                    if re.match(r'[0-9]+,?\.?[0-9]* [KkMmGg]+[Bb]+', cell.text):
+                                        size = self._convertSize(cell.text)
+                                        if not size:
+                                            size = -1
 
-                            except:
+                            except Exception:
                                 logger.log(u"Failed parsing provider. Traceback: %s" % traceback.format_exc(), logger.ERROR)
 
                         if not all([title, download_url]):
@@ -195,41 +200,6 @@ class HDTorrentsProvider(generic.TorrentProvider):
 
         return results
 
-    def findPropers(self, search_date=datetime.today()):
-
-        results = []
-
-        myDB = db.DBConnection()
-        sqlResults = myDB.select(
-            'SELECT s.show_name, e.showid, e.season, e.episode, e.status, e.airdate FROM tv_episodes AS e' +
-            ' INNER JOIN tv_shows AS s ON (e.showid = s.indexer_id)' +
-            ' WHERE e.airdate >= ' + str(search_date.toordinal()) +
-            ' AND (e.status IN (' + ','.join([str(x) for x in Quality.DOWNLOADED]) + ')' +
-            ' OR (e.status IN (' + ','.join([str(x) for x in Quality.SNATCHED]) + ')))'
-        )
-
-        if not sqlResults:
-            return []
-
-        for sqlshow in sqlResults:
-            self.show = curshow = helpers.findCertainShow(sickbeard.showList, int(sqlshow["showid"]))
-            if not self.show: continue
-            curEp = curshow.getEpisode(int(sqlshow["season"]), int(sqlshow["episode"]))
-
-            proper_searchString = self._get_episode_search_strings(curEp, add_string='PROPER')
-
-            for item in self._doSearch(proper_searchString[0]):
-                title, url = self._get_title_and_url(item)
-                results.append(classes.Proper(title, url, datetime.today(), self.show))
-
-            repack_searchString = self._get_episode_search_strings(curEp, add_string='REPACK')
-
-            for item in self._doSearch(repack_searchString[0]):
-                title, url = self._get_title_and_url(item)
-                results.append(classes.Proper(title, url, datetime.today(), self.show))
-
-        return results
-
     def seedRatio(self):
         return self.ratio
 
@@ -244,12 +214,12 @@ class HDTorrentsProvider(generic.TorrentProvider):
             size = size * 1024**3
         elif modifier in 'TB':
             size = size * 1024**4
-        return size
+        return int(size)
 
 class HDTorrentsCache(tvcache.TVCache):
-    def __init__(self, provider):
+    def __init__(self, provider_obj):
 
-        tvcache.TVCache.__init__(self, provider)
+        tvcache.TVCache.__init__(self, provider_obj)
 
         # only poll HDTorrents every 10 minutes max
         self.minTime = 10

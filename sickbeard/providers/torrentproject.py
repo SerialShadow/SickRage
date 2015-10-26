@@ -16,19 +16,13 @@
 # You should have received a copy of the GNU General Public License
 # along with SickRage.  If not, see <http://www.gnu.org/licenses/>.
 
-import datetime
-import generic
-import json
-from urllib import quote
+from urllib import quote_plus
 
 from sickbeard import logger
 from sickbeard import tvcache
-from sickbeard import show_name_helpers
-from sickbeard import db
-from sickbeard.common import WANTED
+from sickbeard import helpers
+from sickbeard.providers import generic
 from sickbeard.common import USER_AGENT
-from sickbeard.config import naming_ep_type
-from sickbeard.helpers import sanitizeSceneName
 
 class TORRENTPROJECTProvider(generic.TorrentProvider):
 
@@ -59,7 +53,9 @@ class TORRENTPROJECTProvider(generic.TorrentProvider):
                 if mode != 'RSS':
                     logger.log(u"Search string: %s " % search_string, logger.DEBUG)
 
-                searchURL = self.urls['api'] + "?s=%s&out=json" % quote(search_string)
+
+                searchURL = self.urls['api'] + "?s=%s&out=json&filter=2101&num=150" % quote_plus(search_string.encode('utf-8'))
+
                 logger.log(u"Search URL: %s" %  searchURL, logger.DEBUG)
                 torrents = self.getURL(searchURL, json=True)
                 if not (torrents and "total_found" in torrents and int(torrents["total_found"]) > 0):
@@ -71,20 +67,34 @@ class TORRENTPROJECTProvider(generic.TorrentProvider):
                 results = []
                 for i in torrents:
                     title = torrents[i]["title"]
-                    seeders = int(torrents[i]["seeds"])
-                    leechers = int(torrents[i]["leechs"])
-
+                    seeders = helpers.tryInt(torrents[i]["seeds"], 1)
+                    leechers = helpers.tryInt(torrents[i]["leechs"], 0)
                     if seeders < self.minseed or leechers < self.minleech:
                         if mode != 'RSS':
                             logger.log("Torrent doesn't meet minimum seeds & leechers not selecting : %s" % title, logger.DEBUG)
                         continue
 
-                    hash = torrents[i]["torrent_hash"]
+                    t_hash = torrents[i]["torrent_hash"]
                     size = int(torrents[i]["torrent_size"])
 
-                    trackerUrl = self.urls['api'] + "" + hash + "/trackers_json"
-                    jdata = self.getURL(trackerUrl, json=True)
-                    download_url = "magnet:?xt=urn:btih:" + hash + "&dn=" + title + "".join(["&tr=" + s for s in jdata])
+                    if seeders < 10:
+                        if mode != 'RSS':
+                            logger.log("Torrent has less than 10 seeds getting dyn trackers: " + title, logger.DEBUG)
+                            trackerUrl = self.urls['api'] + "" + t_hash + "/trackers_json"
+                            jdata = self.getURL(trackerUrl, json=True)
+                            if jdata == "maintenance":
+                                download_url = "magnet:?xt=urn:btih:" + t_hash + "&dn=" + title + "&tr=udp://tracker.openbittorrent.com:80&tr=udp://tracker.coppersurfer.tk:6969&tr=udp://open.demonii.com:1337&tr=udp://tracker.leechers-paradise.org:6969&tr=udp://exodus.desync.com:6969"
+                                logger.log("Tracker url is in " + jdata + " mode, using hardcoded one" , logger.INFO)
+                            else:
+                                download_url = "magnet:?xt=urn:btih:" + t_hash + "&dn=" + title + "".join(["&tr=" + s for s in jdata])
+                                logger.log("Dyn Magnet: " + download_url, logger.DEBUG)
+                        else:
+                            download_url = "magnet:?xt=urn:btih:" + t_hash + "&dn=" + title + "&tr=udp://tracker.openbittorrent.com:80&tr=udp://tracker.coppersurfer.tk:6969&tr=udp://open.demonii.com:1337&tr=udp://tracker.leechers-paradise.org:6969&tr=udp://exodus.desync.com:6969"
+                            logger.log("Result has less than 10 seeds but not using Dyn Magnet becouse its from RSS" + title, logger.DEBUG)
+                    else:
+                        #logger.log("Torrent has more than 10 seeds using hard coded trackers", logger.DEBUG)
+                        download_url = "magnet:?xt=urn:btih:" + t_hash + "&dn=" + title + "&tr=udp://tracker.openbittorrent.com:80&tr=udp://tracker.coppersurfer.tk:6969&tr=udp://open.demonii.com:1337&tr=udp://tracker.leechers-paradise.org:6969&tr=udp://exodus.desync.com:6969"
+
 
                     if not all([title, download_url]):
                         continue
@@ -104,17 +114,15 @@ class TORRENTPROJECTProvider(generic.TorrentProvider):
         return results
 
 class TORRENTPROJECTCache(tvcache.TVCache):
-    def __init__(self, provider):
+    def __init__(self, provider_obj):
 
-        tvcache.TVCache.__init__(self, provider)
+        tvcache.TVCache.__init__(self, provider_obj)
 
-        # set this 0 to suppress log line, since we aren't updating it anyways
-        self.minTime = 0
+        self.minTime = 20
 
     def _getRSSData(self):
-        # no rss for torrentproject afaik,& can't search with empty string
-        # newest results are always > 1 day since added anyways
-        search_strings = {'RSS': ['']}
-        return {'entries': {}}
+        
+        search_params = {'RSS': ['0day']}
+        return {'entries': self.provider._doSearch(search_params)}
 
 provider = TORRENTPROJECTProvider()

@@ -20,22 +20,19 @@
 from __future__ import with_statement
 
 import traceback
-import re
+
 import datetime
-import xmltodict
 from urllib import urlencode
+
+import xmltodict
+import HTMLParser
 
 import sickbeard
 from sickbeard import logger
 from sickbeard import tvcache
-from sickbeard import helpers
-from sickbeard import db
-from sickbeard import classes
-from sickbeard.common import Quality
 from sickbeard.common import USER_AGENT
 from sickbeard.providers import generic
 from xml.parsers.expat import ExpatError
-from sickbeard.show_name_helpers import allPossibleShowNames, sanitizeSceneName
 
 class KATProvider(generic.TorrentProvider):
     def __init__(self):
@@ -45,7 +42,6 @@ class KATProvider(generic.TorrentProvider):
         self.supportsBacklog = True
         self.public = True
 
-        self.enabled = False
         self.confirmed = True
         self.ratio = None
         self.minseed = None
@@ -81,7 +77,7 @@ class KATProvider(generic.TorrentProvider):
             logger.log(u"Search Mode: %s" % mode, logger.DEBUG)
             for search_string in search_strings[mode]:
 
-                self.search_params.update({'q': search_string, 'field': ('seeders', 'time_add')[mode == 'RSS']})
+                self.search_params.update({'q': search_string.encode('utf-8'), 'field': ('seeders', 'time_add')[mode == 'RSS']})
 
                 if mode != 'RSS':
                     logger.log(u"Search string: %s" % search_string, logger.DEBUG)
@@ -96,8 +92,7 @@ class KATProvider(generic.TorrentProvider):
                         continue
 
                     try:
-                        # Must replace non-breaking space, as there is no xml DTD
-                        data = xmltodict.parse(data.replace('&nbsp;','&#xA0;'))
+                        data = xmltodict.parse(HTMLParser.HTMLParser().unescape(data.encode('utf-8')).replace('&', '&amp;'))
                     except ExpatError as e:
                         logger.log(u"Failed parsing provider. Traceback: %r\n%r" % (traceback.format_exc(), data), logger.ERROR)
                         continue
@@ -112,7 +107,7 @@ class KATProvider(generic.TorrentProvider):
 
                     for item in entries:
                         try:
-                            title = item['title']
+                            title = item['title'].decode('utf-8')
 
                             # Use the torcache link kat provides,
                             # unless it is not torcache or we are not using blackhole
@@ -147,8 +142,9 @@ class KATProvider(generic.TorrentProvider):
                                 logger.log(u"Discarding torrent because it doesn't meet the minimum seeders or leechers: {0} (S:{1} L:{2})".format(title, seeders, leechers), logger.DEBUG)
                             continue
 
-                        if self.confirmed and not verified and mode != 'RSS':
-                            logger.log(u"Found result " + title + " but that doesn't seem like a verified result so I'm ignoring it", logger.DEBUG)
+                        if self.confirmed and not verified:
+                            if mode != 'RSS':
+                                logger.log(u"Found result " + title + " but that doesn't seem like a verified result so I'm ignoring it", logger.DEBUG)
                             continue
 
                         item = title, download_url, size, seeders, leechers
@@ -164,33 +160,6 @@ class KATProvider(generic.TorrentProvider):
             items[mode].sort(key=lambda tup: tup[3], reverse=True)
 
             results += items[mode]
-
-        return results
-
-    def findPropers(self, search_date=datetime.datetime.today()-datetime.timedelta(days=1)):
-        results = []
-
-        myDB = db.DBConnection()
-        sqlResults = myDB.select(
-            'SELECT s.show_name, e.showid, e.season, e.episode, e.status, e.airdate, s.indexer FROM tv_episodes AS e' +
-            ' INNER JOIN tv_shows AS s ON (e.showid = s.indexer_id)' +
-            ' WHERE e.airdate >= ' + str(search_date.toordinal()) +
-            ' AND (e.status IN (' + ','.join([str(x) for x in Quality.DOWNLOADED]) + ')' +
-            ' OR (e.status IN (' + ','.join([str(x) for x in Quality.SNATCHED]) + ')))'
-        )
-
-        for sqlshow in sqlResults or []:
-            show = helpers.findCertainShow(sickbeard.showList, int(sqlshow["showid"]))
-            if show:
-                curEp = show.getEpisode(int(sqlshow["season"]), int(sqlshow["episode"]))
-
-                searchStrings = self._get_episode_search_strings(curEp, add_string='PROPER|REPACK')
-
-                for item in self._doSearch(searchStrings[0]):
-                    title, url = self._get_title_and_url(item)
-                    pubdate = item[6]
-
-                    results.append(classes.Proper(title, url, pubdate, show))
 
         return results
 

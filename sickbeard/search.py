@@ -27,7 +27,7 @@ import traceback
 
 import sickbeard
 
-from common import SNATCHED, SNATCHED_PROPER, SNATCHED_BEST, Quality, SEASON_RESULT, MULTI_EP_RESULT
+from sickbeard.common import SNATCHED, SNATCHED_PROPER, SNATCHED_BEST, Quality, SEASON_RESULT, MULTI_EP_RESULT
 
 from sickbeard import logger, db, show_name_helpers, helpers
 from sickbeard import sab
@@ -107,8 +107,11 @@ def snatchEpisode(result, endStatus=SNATCHED):
         for curEp in result.episodes:
             if datetime.date.today() - curEp.airdate <= datetime.timedelta(days=7):
                 result.priority = 1
-    if re.search('(^|[\. _-])(proper|repack)([\. _-]|$)', result.name, re.I) != None:
+    if re.search(r'(^|[\. _-])(proper|repack)([\. _-]|$)', result.name, re.I) != None:
         endStatus = SNATCHED_PROPER
+
+    if result.url.startswith('magnet') or result.url.endswith('torrent'):
+        result.resultType = 'torrent'
 
     # NZBs can be sent straight to SAB or saved to disk
     if result.resultType in ("nzb", "nzbdata"):
@@ -165,7 +168,12 @@ def snatchEpisode(result, endStatus=SNATCHED):
             sql_l.append(curEpObj.get_sql())
 
         if curEpObj.status not in Quality.DOWNLOADED:
-            notifiers.notify_snatch(curEpObj._format_pattern('%SN - %Sx%0E - %EN - %QN') + " from " + result.provider.name)
+            try:
+                notifiers.notify_snatch(curEpObj._format_pattern('%SN - %Sx%0E - %EN - %QN') + " from " + result.provider.name)
+            except:
+                # Without this, when notification fail, it crashes the snatch thread and SR will
+                # keep snatching until notification is sent
+                logger.log(u"Failed to send snatch notification", logger.DEBUG)
 
             trakt_data.append((curEpObj.season, curEpObj.episode))
 
@@ -328,7 +336,7 @@ def wantedEpisodes(show, fromDate):
     myDB = db.DBConnection()
 
     sqlResults = myDB.select("SELECT status, season, episode FROM tv_episodes WHERE showid = ? AND season > 0 and airdate > ?",
-            [show.indexerid, fromDate.toordinal()])
+                             [show.indexerid, fromDate.toordinal()])
 
     # check through the list of statuses to see if we want any
     wanted = []
@@ -476,7 +484,7 @@ def searchProviders(show, episodes, manualSearch=False, downCurQuality=False):
         if search_mode == 'sponly' and manualSearch == True:
             search_mode = 'eponly'
 
-        while(True):
+        while True:
             searchCount += 1
 
             if search_mode == 'eponly':

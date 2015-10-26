@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
-from __future__ import unicode_literals
 import logging
 
-from babelfish import Language
+from babelfish import Language, language_converters
 from requests import Session
 
 from . import Provider, get_version
@@ -11,7 +10,7 @@ from ..subtitle import Subtitle, fix_line_ending
 
 
 logger = logging.getLogger(__name__)
-
+language_converters.register('thesubdb = subliminal.converters.thesubdb:TheSubDBConverter')
 
 class TheSubDBSubtitle(Subtitle):
     provider_name = 'thesubdb'
@@ -35,7 +34,7 @@ class TheSubDBSubtitle(Subtitle):
 
 
 class TheSubDBProvider(Provider):
-    languages = {Language.fromalpha2(l) for l in ['en', 'es', 'fr', 'it', 'nl', 'pl', 'pt', 'ro', 'sv', 'tr']}
+    languages = {Language.fromthesubdb(l) for l in language_converters['thesubdb'].codes}
     required_hash = 'thesubdb'
     server_url = 'http://api.thesubdb.com/'
 
@@ -62,10 +61,10 @@ class TheSubDBProvider(Provider):
         # loop over languages
         subtitles = []
         for language_code in r.text.split(','):
-            language = Language.fromalpha2(language_code)
+            language = Language.fromthesubdb(language_code)
 
             subtitle = TheSubDBSubtitle(language, hash)
-            logger.info('Found subtitle %r', subtitle)
+            logger.debug('Found subtitle %r', subtitle)
             subtitles.append(subtitle)
 
         return subtitles

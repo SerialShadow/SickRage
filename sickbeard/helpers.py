@@ -137,6 +137,7 @@ def remove_non_release_groups(name):
                        r'\[rarbg\]$':       'searchre',
                        r'\[eztv\]$':        'searchre',
                        r'\[ettv\]$':        'searchre',
+                       r'\[cttv\]$':        'searchre',
                        r'\[vtv\]$':         'searchre',
                        r'\[EtHD\]$':        'searchre',
                        r'\[GloDLS\]$':      'searchre',
@@ -457,26 +458,6 @@ def searchIndexerForShowID(regShowName, indexer=None, indexer_id=None, ui=None):
 
     return (None, None, None)
 
-
-def sizeof_fmt(num):
-    """
-    >>> sizeof_fmt(2)
-    '2.0 bytes'
-    >>> sizeof_fmt(1024)
-    '1.0 KB'
-    >>> sizeof_fmt(2048)
-    '2.0 KB'
-    >>> sizeof_fmt(2**20)
-    '1.0 MB'
-    >>> sizeof_fmt(1234567)
-    '1.2 MB'
-    """
-    for x in ['bytes', 'KB', 'MB', 'GB', 'TB']:
-        if num < 1024.0:
-            return "%3.1f %s" % (num, x)
-        num /= 1024.0
-
-
 def listMediaFiles(path):
     """
     Get a list of files possibly containing media in a path
@@ -561,7 +542,8 @@ def hardlinkFile(srcFile, destFile):
         ek(link, srcFile, destFile)
         fixSetGroupID(destFile)
     except Exception as e:
-        logger.log(u"Failed to create hardlink of %s at %s. Error: %r. Copying instead" % (srcFile, destFile, ex(e)),logger.ERROR)
+        logger.log(u"Failed to create hardlink of %s at %s. Error: %r. Copying instead" 
+        % (srcFile, destFile, ex(e)), logger.WARNING)
         copyFile(srcFile, destFile)
 
 
@@ -594,7 +576,8 @@ def moveAndSymlinkFile(srcFile, destFile):
         fixSetGroupID(destFile)
         ek(symlink, destFile, srcFile)
     except Exception as e:
-        logger.log(u"Failed to create symlink of %s at %s. Error: %r. Copying instead" % (srcFile, destFile, ex(e)),logger.ERROR)
+        logger.log(u"Failed to create symlink of %s at %s. Error: %r. Copying instead" 
+        % (srcFile, destFile, ex(e)), logger.WARNING)
         copyFile(srcFile, destFile)
 
 
@@ -1041,13 +1024,13 @@ def restoreVersionedFile(backup_file, version):
         return False
 
     try:
-        logger.log(u"Trying to backup %s to %s.r%s before restoring backup" % (new_file, new_file, version),
-            logger.DEBUG)
+        logger.log(u"Trying to backup %s to %s.r%s before restoring backup" 
+        % (new_file, new_file, version), logger.DEBUG)
 
         shutil.move(new_file, new_file + '.' + 'r' + str(version))
     except Exception as e:
-        logger.log(u"Error while trying to backup DB file %s before proceeding with restore: %r" % (restore_file, ex(e)),
-            logger.WARNING)
+        logger.log(u"Error while trying to backup DB file %s before proceeding with restore: %r" 
+        % (restore_file, ex(e)), logger.WARNING)
         return False
 
     while not ek(os.path.isfile, new_file):
@@ -1611,8 +1594,8 @@ def getURL(url, post_data=None, params={}, headers={}, timeout=30, session=None,
             resp = session.get(url, timeout=timeout, allow_redirects=True, verify=session.verify)
 
         if not resp.ok:
-            logger.log(u"Requested getURL %s returned status code is %s: %s" % (url, resp.status_code, codeDescription(resp.status_code)),
-            logger.DEBUG)
+            logger.log(u"Requested getURL %s returned status code is %s: %s" 
+            % (url, resp.status_code, codeDescription(resp.status_code)), logger.DEBUG)
             return None
 
         if proxyGlypeProxySSLwarning is not None:
@@ -1620,11 +1603,11 @@ def getURL(url, post_data=None, params={}, headers={}, timeout=30, session=None,
                 resp = session.get(proxyGlypeProxySSLwarning, timeout=timeout, allow_redirects=True, verify=session.verify)
 
                 if not resp.ok:
-                    logger.log(u"GlypeProxySSLwarning: Requested getURL %s returned status code is %s: %s" % (url, resp.status_code, codeDescription(resp.status_code)),
-                    logger.DEBUG)
+                    logger.log(u"GlypeProxySSLwarning: Requested getURL %s returned status code is %s: %s" 
+                    % (url, resp.status_code, codeDescription(resp.status_code)), logger.DEBUG)
                     return None
 
-    except SocketTimeout:
+    except (SocketTimeout, TypeError) as e:
         logger.log(u"Connection timed out (sockets) accessing getURL %s Error: %r" % (url, ex(e)), logger.WARNING)
         return None
     except requests.exceptions.HTTPError as e:
@@ -1670,7 +1653,8 @@ def download_file(url, filename, session=None, headers={}):
     try:
         with closing(session.get(url, allow_redirects=True, verify=session.verify)) as resp:
             if not resp.ok:
-                logger.log(u"Requested download url %s returned status code is %s: %s" % ( url, resp.status_code, codeDescription(resp.status_code) ) , logger.DEBUG)
+                logger.log(u"Requested download url %s returned status code is %s: %s" 
+                % (url, resp.status_code, codeDescription(resp.status_code)), logger.DEBUG)
                 return False
 
             try:
@@ -1684,9 +1668,13 @@ def download_file(url, filename, session=None, headers={}):
             except Exception:
                 logger.log(u"Problem setting permissions or writing file to: %s" % filename, logger.WARNING)
 
+    except (SocketTimeout, TypeError) as e:
+        _remove_file_failed(filename)
+        logger.log(u"Connection timed out (sockets) while loading download URL %s Error: %r" % (url, ex(e)), logger.WARNING)
+        return None
     except requests.exceptions.HTTPError as e:
         _remove_file_failed(filename)
-        logger.log(u"HTTP error %r while loading download URL %s " % (ex(e), url ), logger.WARNING)
+        logger.log(u"HTTP error %r while loading download URL %s " % (ex(e), url), logger.WARNING)
         return False
     except requests.exceptions.ConnectionError as e:
         _remove_file_failed(filename)
@@ -1694,7 +1682,7 @@ def download_file(url, filename, session=None, headers={}):
         return False
     except requests.exceptions.Timeout as e:
         _remove_file_failed(filename)
-        logger.log(u"Connection timed out %r while loading download URL %s " % (ex(e), url ), logger.WARNING)
+        logger.log(u"Connection timed out %r while loading download URL %s " % (ex(e), url), logger.WARNING)
         return False
     except EnvironmentError as e:
         _remove_file_failed(filename)
@@ -1702,7 +1690,7 @@ def download_file(url, filename, session=None, headers={}):
         return False
     except Exception:
         _remove_file_failed(filename)
-        logger.log(u"Unknown exception while loading download URL %s : %r" % ( url, traceback.format_exc() ), logger.WARNING)
+        logger.log(u"Unknown exception while loading download URL %s : %r" % (url, traceback.format_exc()), logger.WARNING)
         return False
 
     return True
@@ -1755,24 +1743,10 @@ def generateApiKey():
 
 def pretty_filesize(file_bytes):
     """Return humanly formatted sizes from bytes"""
-
-    file_bytes = float(file_bytes)
-    if file_bytes >= 1099511627776:
-        terabytes = file_bytes / 1099511627776
-        size = '%.2f TB' % terabytes
-    elif file_bytes >= 1073741824:
-        gigabytes = file_bytes / 1073741824
-        size = '%.2f GB' % gigabytes
-    elif file_bytes >= 1048576:
-        megabytes = file_bytes / 1048576
-        size = '%.2f MB' % megabytes
-    elif file_bytes >= 1024:
-        kilobytes = file_bytes / 1024
-        size = '%.2f KB' % kilobytes
-    else:
-        size = '%.2f b' % file_bytes
-
-    return size
+    for mod in ['B', 'KB', 'MB', 'GB', 'TB', 'PB']:
+        if file_bytes < 1024.00:
+            return "%3.2f %s" % (file_bytes, mod)
+        file_bytes /= 1024.00
 
 if __name__ == '__main__':
     import doctest
@@ -1848,8 +1822,8 @@ def verify_freespace(src, dest, oldfile=None):
     if diskfree > neededspace:
         return True
     else:
-        logger.log("Not enough free space: Needed: %s bytes ( %s ), found: %s bytes ( %s )" % ( neededspace, pretty_filesize(neededspace), diskfree, pretty_filesize(diskfree) ) , 
-        logger.WARNING)
+        logger.log("Not enough free space: Needed: %s bytes ( %s ), found: %s bytes ( %s )" 
+        % (neededspace, pretty_filesize(neededspace), diskfree, pretty_filesize(diskfree)), logger.WARNING)
         return False
 
 # https://gist.github.com/thatalextaylor/7408395
@@ -1907,17 +1881,16 @@ def isFileLocked(checkfile, writeLockCheck=False):
 
 def getDiskSpaceUsage(diskPath=None):
     '''
-    returns the free space in MB for a given path or False if no path given
+    returns the free space in human readable bytes for a given path or False if no path given
     :param diskPath: the filesystem path being checked
     '''
-
     if diskPath and os.path.exists(diskPath):
         if platform.system() == 'Windows':
             free_bytes = ctypes.c_ulonglong(0)
             ctypes.windll.kernel32.GetDiskFreeSpaceExW(ctypes.c_wchar_p(diskPath), None, None, ctypes.pointer(free_bytes))
-            return free_bytes.value / 1024 / 1024
+            return pretty_filesize(free_bytes.value)
         else:
             st = os.statvfs(diskPath)
-            return st.f_bavail * st.f_frsize / 1024 / 1024
+            return pretty_filesize(st.f_bavail * st.f_frsize)
     else:
         return False

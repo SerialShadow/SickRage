@@ -22,7 +22,7 @@ import logging
 import zipfile
 import datetime as dt
 import requests
-from requests import exceptions
+
 import xmltodict
 
 try:
@@ -585,8 +585,8 @@ class Tvdb:
             raise tvdb_error("Connection error " + str(e.message) + " while loading URL " + str(url))
         except requests.exceptions.Timeout, e:
             raise tvdb_error("Connection timed out " + str(e.message) + " while loading URL " + str(url))
-        except Exception:
-            raise tvdb_error("Unknown exception while loading URL " + url + ": " + traceback.format_exc())
+        except Exception as e:
+            raise tvdb_error("Unknown exception while loading URL " + url + ": " + repr(e))
 
         def process(path, key, value):
             key = key.lower()
@@ -617,12 +617,12 @@ class Tvdb:
                 zipdata = StringIO.StringIO()
                 zipdata.write(resp.content)
                 myzipfile = zipfile.ZipFile(zipdata)
-                return xmltodict.parse(myzipfile.read('%s.xml' % language).replace('&nbsp;','&#xA0;'), postprocessor=process)
+                return xmltodict.parse(myzipfile.read('%s.xml' % language), postprocessor=process)
             except zipfile.BadZipfile:
                 raise tvdb_error("Bad zip file received from thetvdb.com, could not read it")
         else:
             try:
-                return xmltodict.parse(resp.content.decode('utf-8').replace('&nbsp;','&#xA0;'), postprocessor=process)
+                return xmltodict.parse(resp.content.decode('utf-8'), postprocessor=process)
             except:
                 return dict([(u'data', None)])
 

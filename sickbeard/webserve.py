@@ -35,9 +35,8 @@ from sickbeard import naming
 from sickbeard import subtitles
 from sickbeard import network_timezones
 from sickbeard.providers import newznab, rsstorrent
-from sickbeard.common import Quality, Overview, statusStrings, qualityPresetStrings, cpu_presets
+from sickbeard.common import Quality, Overview, statusStrings, cpu_presets
 from sickbeard.common import SNATCHED, UNAIRED, IGNORED, WANTED, FAILED, SKIPPED
-from sickbeard.common import SD, HD720p, HD1080p
 from sickbeard.blackandwhitelist import BlackAndWhiteList, short_group_names
 from sickbeard.browser import foldersAtPath
 from sickbeard.scene_numbering import get_scene_numbering, set_scene_numbering, get_scene_numbering_for_show, \
@@ -64,6 +63,7 @@ from sickrage.show.History import History as HistoryTool
 from sickrage.show.Show import Show
 from sickrage.system.Restart import Restart
 from sickrage.system.Shutdown import Shutdown
+
 from versionChecker import CheckVersion
 
 import requests
@@ -83,6 +83,7 @@ from tornado.gen import coroutine
 from tornado.ioloop import IOLoop
 from tornado.concurrent import run_on_executor
 from concurrent.futures import ThreadPoolExecutor
+
 
 class PageTemplate(MakoTemplate):
 
@@ -1313,11 +1314,11 @@ class Home(WebRoot):
 
             if showObj.is_anime:
                 return t.render(show=show, scene_exceptions=scene_exceptions, groups=groups, whitelist=whitelist,
-                                blacklist=blacklist, title='Edit Shows', header='Edit Shows')
+                                blacklist=blacklist, title='Edit Show', header='Edit Show')
             else:
-                return t.render(show=show, scene_exceptions=scene_exceptions, title='Edit Shows', header='Edit Shows')
+                return t.render(show=show, scene_exceptions=scene_exceptions, title='Edit Show', header='Edit Show')
 
-        flatten_folders = config.checkbox_to_value(flatten_folders)
+        flatten_folders = not config.checkbox_to_value(flatten_folders) # UI inverts this value
         dvdorder = config.checkbox_to_value(dvdorder)
         archive_firstmatch = config.checkbox_to_value(archive_firstmatch)
         paused = config.checkbox_to_value(paused)
@@ -1473,21 +1474,22 @@ class Home(WebRoot):
         return self.redirect("/home/displayShow?show=%i" % show.indexerid)
 
     def deleteShow(self, show=None, full=0):
-        error, show = Show.delete(show, full)
+        if show:
+            error, show = Show.delete(show, full)
 
-        if error is not None:
-            return self._genericMessage('Error', error)
+            if error is not None:
+                return self._genericMessage('Error', error)
 
-        ui.notifications.message(
-            '%s has been %s %s' %
-            (
-                show.name,
-                ('deleted', 'trashed')[bool(sickbeard.TRASH_REMOVE_SHOW)],
-                ('(media untouched)', '(with all related media)')[bool(full)]
+            ui.notifications.message(
+                '%s has been %s %s' %
+                (
+                    show.name,
+                    ('deleted', 'trashed')[bool(sickbeard.TRASH_REMOVE_SHOW)],
+                    ('(media untouched)', '(with all related media)')[bool(full)]
+                )
             )
-        )
 
-        time.sleep(cpu_presets[sickbeard.CPU_PRESET])
+            time.sleep(cpu_presets[sickbeard.CPU_PRESET])
 
         # Don't redirect to the default page, so the user can confirm that the show was deleted
         return self.redirect('/home/')
@@ -1501,7 +1503,7 @@ class Home(WebRoot):
 
         # This is a refresh error
         if error is not None:
-            ui.notifications.error('Unable to refresh this show.', ex(error))
+            ui.notifications.error('Unable to refresh this show.', error)
 
         time.sleep(cpu_presets[sickbeard.CPU_PRESET])
 
@@ -1659,20 +1661,20 @@ class Home(WebRoot):
                 with epObj.lock:
                     # don't let them mess up UNAIRED episodes
                     if epObj.status == UNAIRED:
-                        logger.log(u"Refusing to change status of " + curEp + " because it is UNAIRED", logger.ERROR)
+                        logger.log(u"Refusing to change status of " + curEp + " because it is UNAIRED", logger.WARNING)
                         continue
 
                     if int(status) in Quality.DOWNLOADED and epObj.status not in Quality.SNATCHED + Quality.SNATCHED_PROPER + Quality.DOWNLOADED + [
                         IGNORED] and not ek(os.path.isfile, epObj.location):
                         logger.log(
                             u"Refusing to change status of " + curEp + " to DOWNLOADED because it's not SNATCHED/DOWNLOADED",
-                            logger.ERROR)
+                            logger.WARNING)
                         continue
 
                     if int(status) == FAILED and epObj.status not in Quality.SNATCHED + Quality.SNATCHED_PROPER + Quality.DOWNLOADED + Quality.ARCHIVED:
                         logger.log(
                             u"Refusing to change status of " + curEp + " to FAILED because it's not SNATCHED/DOWNLOADED",
-                            logger.ERROR)
+                            logger.WARNING)
                         continue
 
                     if epObj.status in Quality.DOWNLOADED + Quality.ARCHIVED and int(status) == WANTED:
@@ -3685,7 +3687,10 @@ class ConfigGeneral(Config):
             sickbeard.TIME_PRESET_W_SECONDS = time_preset
             sickbeard.TIME_PRESET = sickbeard.TIME_PRESET_W_SECONDS.replace(u":%S", u"")
 
-        sickbeard.TIMEZONE_DISPLAY = timezone_display
+        #Force all users to use local
+        #sickbeard.TIMEZONE_DISPLAY = timezone_display
+        sickbeard.TIMEZONE_DISPLAY = 'local'
+
 
         if not config.change_LOG_DIR(log_dir, web_log):
             results += ["Unable to create directory " + os.path.normpath(log_dir) + ", log directory not changed."]
@@ -3801,7 +3806,7 @@ class ConfigSearch(Config):
                    torrent_dir=None, torrent_username=None, torrent_password=None, torrent_host=None,
                    torrent_label=None, torrent_label_anime=None, torrent_path=None, torrent_verify_cert=None,
                    torrent_seed_time=None, torrent_paused=None, torrent_high_bandwidth=None,
-                   torrent_rpcurl=None, torrent_auth_type = None, ignore_words=None, require_words=None):
+                   torrent_rpcurl=None, torrent_auth_type = None, ignore_words=None, require_words=None, ignored_subs_list=None):
 
         results = []
 
@@ -3824,6 +3829,7 @@ class ConfigSearch(Config):
 
         sickbeard.IGNORE_WORDS = ignore_words if ignore_words else ""
         sickbeard.REQUIRE_WORDS = require_words if require_words else ""
+        sickbeard.IGNORED_SUBS_LIST = ignored_subs_list if ignored_subs_list else ""
 
         sickbeard.RANDOMIZE_PROVIDERS = config.checkbox_to_value(randomize_providers)
 
@@ -3892,7 +3898,7 @@ class ConfigPostProcessing(Config):
                            kodi_data=None, kodi_12plus_data=None, mediabrowser_data=None, sony_ps3_data=None,
                            wdtv_data=None, tivo_data=None, mede8er_data=None,
                            keep_processed_dir=None, process_method=None, del_rar_contents=None, process_automatically=None,
-                           no_delete=None, rename_episodes=None, airdate_episodes=None, unpack=None,
+                           no_delete=None, rename_episodes=None, airdate_episodes=None, file_timestamp_timezone=None, unpack=None,
                            move_associated_files=None, sync_files=None, postpone_if_sync_files=None, nfo_rename=None,
                            tv_download_dir=None, naming_custom_abd=None,
                            naming_anime=None,create_missing_show_dirs=None,add_shows_wo_dir=None,
@@ -3927,6 +3933,7 @@ class ConfigPostProcessing(Config):
         sickbeard.EXTRA_SCRIPTS = [x.strip() for x in extra_scripts.split('|') if x.strip()]
         sickbeard.RENAME_EPISODES = config.checkbox_to_value(rename_episodes)
         sickbeard.AIRDATE_EPISODES = config.checkbox_to_value(airdate_episodes)
+        sickbeard.FILE_TIMESTAMP_TIMEZONE = file_timestamp_timezone
         sickbeard.MOVE_ASSOCIATED_FILES = config.checkbox_to_value(move_associated_files)
         sickbeard.SYNC_FILES = sync_files
         sickbeard.POSTPONE_IF_SYNC_FILES = config.checkbox_to_value(postpone_if_sync_files)
@@ -3992,7 +3999,7 @@ class ConfigPostProcessing(Config):
 
         if len(results) > 0:
             for x in results:
-                logger.log(x, logger.ERROR)
+                logger.log(x, logger.WARNING)
             ui.notifications.error('Error(s) Saving Configuration',
                                    '<br />\n'.join(results))
         else:
@@ -4419,6 +4426,13 @@ class ConfigProviders(Config):
                 except:
                     curTorrentProvider.ranked = 0
 
+            if hasattr(curTorrentProvider, 'engrelease'):
+                try:
+                    curTorrentProvider.engrelease = config.checkbox_to_value(
+                        kwargs[curTorrentProvider.getID() + '_engrelease'])
+                except:
+                    curTorrentProvider.engrelease = 0
+
             if hasattr(curTorrentProvider, 'sorting'):
                 try:
                     curTorrentProvider.sorting = str(kwargs[curTorrentProvider.getID() + '_sorting']).strip()
@@ -4787,7 +4801,8 @@ class ConfigSubtitles(Config):
 
     def saveSubtitles(self, use_subtitles=None, subtitles_plugins=None, subtitles_languages=None, subtitles_dir=None,
                       service_order=None, subtitles_history=None, subtitles_finder_frequency=None,
-                      subtitles_multi=None, embedded_subtitles_all=None, subtitles_extra_scripts=None):
+                      subtitles_multi=None, embedded_subtitles_all=None, subtitles_extra_scripts=None, subtitles_hearing_impaired=None,
+                      addic7ed_user=None, addic7ed_pass=None, legendastv_user=None, legendastv_pass=None, opensubtitles_user=None, opensubtitles_pass=None):
 
         results = []
 
@@ -4798,6 +4813,7 @@ class ConfigSubtitles(Config):
         sickbeard.SUBTITLES_DIR = subtitles_dir
         sickbeard.SUBTITLES_HISTORY = config.checkbox_to_value(subtitles_history)
         sickbeard.EMBEDDED_SUBTITLES_ALL = config.checkbox_to_value(embedded_subtitles_all)
+        sickbeard.SUBTITLES_HEARING_IMPAIRED = config.checkbox_to_value(subtitles_hearing_impaired)
         sickbeard.SUBTITLES_MULTI = config.checkbox_to_value(subtitles_multi)
         sickbeard.SUBTITLES_EXTRA_SCRIPTS = [x.strip() for x in subtitles_extra_scripts.split('|') if x.strip()]
 
@@ -4812,6 +4828,13 @@ class ConfigSubtitles(Config):
 
         sickbeard.SUBTITLES_SERVICES_LIST = subtitles_services_list
         sickbeard.SUBTITLES_SERVICES_ENABLED = subtitles_services_enabled
+
+        sickbeard.ADDIC7ED_USER = addic7ed_user or ''
+        sickbeard.ADDIC7ED_PASS = addic7ed_pass or ''
+        sickbeard.LEGENDASTV_USER = legendastv_user or ''
+        sickbeard.LEGENDASTV_PASS = legendastv_pass or ''
+        sickbeard.OPENSUBTITLES_USER = opensubtitles_user or ''
+        sickbeard.OPENSUBTITLES_PASS = opensubtitles_pass or ''
 
         sickbeard.save_config()
 

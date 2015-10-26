@@ -30,7 +30,7 @@ class TitansOfTVProvider(generic.TorrentProvider):
     def __init__(self):
         generic.TorrentProvider.__init__(self, 'TitansOfTV')
         self.supportsBacklog = True
-        self.public = False
+
         self.supportsAbsoluteNumbering = True
         self.api_key = None
         self.ratio = None
@@ -68,7 +68,7 @@ class TitansOfTVProvider(generic.TorrentProvider):
             params.update(search_params)
 
         searchURL = self.url + '?' + urllib.urlencode(params)
-        logger.log(u"Search string: %s " % search_string, logger.DEBUG)
+        logger.log(u"Search string: %s " % search_params, logger.DEBUG)
         logger.log(u"Search URL: %s" %  searchURL, logger.DEBUG) 
 
         parsedJSON = self.getURL(searchURL, json=True)  # do search
@@ -146,8 +146,8 @@ class TitansOfTVProvider(generic.TorrentProvider):
 
 
 class TitansOfTVCache(tvcache.TVCache):
-    def __init__(self, provider):
-        tvcache.TVCache.__init__(self, provider)
+    def __init__(self, provider_obj):
+        tvcache.TVCache.__init__(self, provider_obj)
 
         # At least 10 minutes between queries
         self.minTime = 10

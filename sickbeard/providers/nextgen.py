@@ -1,7 +1,7 @@
 # Author: seedboy
 # URL: https://github.com/seedboy
 #
-# This file is part of SickRage. 
+# This file is part of SickRage.
 #
 # SickRage is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -19,21 +19,12 @@
 import traceback
 import urllib
 import time
-import re
-import datetime
-import sickbeard
-import generic
-from sickbeard.common import Quality
+
 from sickbeard import logger
 from sickbeard import tvcache
-from sickbeard import db
-from sickbeard import classes
-from sickbeard import helpers
-from sickbeard import show_name_helpers
-import requests
-from sickbeard.bs4_parser import BS4Parser
-from sickbeard.helpers import sanitizeSceneName
+from sickbeard.providers import generic
 
+from sickbeard.bs4_parser import BS4Parser
 
 class NextGenProvider(generic.TorrentProvider):
 
@@ -42,22 +33,17 @@ class NextGenProvider(generic.TorrentProvider):
         generic.TorrentProvider.__init__(self, "NextGen")
 
         self.supportsBacklog = True
-        self.public = False
 
-        self.enabled = False
+
         self.username = None
         self.password = None
         self.ratio = None
 
         self.cache = NextGenCache(self)
 
-        self.urls = {'base_url': 'https://nxgn.org/',
-                'search': 'https://nxgn.org/browse.php?search=%s&cat=0&incldead=0&modes=%s',
-                'login_page': 'https://nxgn.org/login.php',
-                'detail': 'https://nxgn.org/details.php?id=%s',
-                'download': 'https://nxgn.org/download.php?id=%s',
-                'takelogin': 'https://nxgn.org/takelogin.php?csrf=',
-                }
+        self.urls = {'base_url': 'https://nxtgn.biz/',
+                     'search': 'https://nxtgn.biz/browse.php?search=%s&cat=0&incldead=0&modes=%s',
+                     'login_page': 'https://nxtgn.biz/login.php'}
 
         self.url = self.urls['base_url']
 
@@ -66,6 +52,10 @@ class NextGenProvider(generic.TorrentProvider):
         self.last_login_check = None
 
         self.login_opener = None
+
+        self.minseed = 0
+        self.minleech = 0
+        self.freeleech = True
 
     def isEnabled(self):
         return self.enabled
@@ -102,6 +92,9 @@ class NextGenProvider(generic.TorrentProvider):
         try:
             login_params = self.getLoginParams()
             data = self.getURL(self.urls['login_page'])
+            if not data:
+                return False
+
             with BS4Parser(data) as bs:
                 csrfraw = bs.find('form', attrs={'id': 'login'})['action']
                 output = self.getURL(self.urls['base_url'] + csrfraw, post_data=login_params)
@@ -136,7 +129,7 @@ class NextGenProvider(generic.TorrentProvider):
                     logger.log(u"Search string: %s " % search_string, logger.DEBUG)
 
                 searchURL = self.urls['search'] % (urllib.quote(search_string.encode('utf-8')), self.categories)
-                logger.log(u"Search URL: %s" %  searchURL, logger.DEBUG) 
+                logger.log(u"Search URL: %s" %  searchURL, logger.DEBUG)
                 data = self.getURL(searchURL)
                 if not data:
                     continue
@@ -157,46 +150,39 @@ class NextGenProvider(generic.TorrentProvider):
 
                         #Xirg STANDARD TORRENTS
                         #Continue only if one Release is found
-                        if len(entries) > 0:
-
-                            for result in entries:
-
-                                try:
-                                    torrentName = \
-                                    ((result.find('div', attrs={'id': 'torrent-udgivelse2-users'})).find('a'))['title']
-                                    torrentId = (
-                                    ((result.find('div', attrs={'id': 'torrent-download'})).find('a'))['href']).replace(
-                                        'download.php?id=', '')
-                                    title = str(torrentName)
-                                    download_url = (self.urls['download'] % torrentId).encode('utf8')
-                                    torrent_details_url = (self.urls['detail'] % torrentId).encode('utf8')
-                                    seeders = int(result.find('div', attrs = {'id' : 'torrent-seeders'}).find('a')['class'][0])
-                                    ## Not used, perhaps in the future ##
-                                    #torrent_id = int(torrent['href'].replace('/details.php?id=', ''))
-                                    leechers = int(result.find('td', attrs = {'class' : 'ac t_leechers'}).string)
-                                    #FIXME
-                                    size = -1
-                                except (AttributeError, TypeError):
-                                    continue
-
-                                if not all([title, download_url]):
-                                    continue
-
-                                #Filter unseeded torrent
-                                if seeders < self.minseed or leechers < self.minleech:
-                                    if mode != 'RSS':
-                                        logger.log(u"Discarding torrent because it doesn't meet the minimum seeders or leechers: {0} (S:{1} L:{2})".format(title, seeders, leechers), logger.DEBUG)
-                                    continue
-
-                                item = title, download_url, size, seeders, leechers
-                                if mode != 'RSS':
-                                    logger.log(u"Found result: %s " % title, logger.DEBUG)
-
-                                items[mode].append(item)
-
-                        else:
+                        if not entries:
                             logger.log(u"Data returned from provider does not contain any torrents", logger.DEBUG)
                             continue
+
+                        for result in entries:
+
+                            try:
+                                title = result.find('div', attrs={'id': 'torrent-udgivelse2-users'}).a['title']
+                                download_url = self.urls['base_url'] + result.find('div', attrs={'id': 'torrent-download'}).a['href']
+                                seeders = int(result.find('div', attrs={'id' : 'torrent-seeders'}).text)
+                                leechers = int(result.find('div', attrs={'id' : 'torrent-leechers'}).text)
+                                size = self._convertSize(result.find('div', attrs={'id' : 'torrent-size'}).text)
+                                freeleech = result.find('div', attrs={'id': 'browse-mode-F2L'}) is not None
+                            except (AttributeError, TypeError, KeyError):
+                                continue
+
+                            if self.freeleech and not freeleech:
+                                continue
+
+                            if not all([title, download_url]):
+                                continue
+
+                            #Filter unseeded torrent
+                            if seeders < self.minseed or leechers < self.minleech:
+                                if mode != 'RSS':
+                                    logger.log(u"Discarding torrent because it doesn't meet the minimum seeders or leechers: {0} (S:{1} L:{2})".format(title, seeders, leechers), logger.DEBUG)
+                                continue
+
+                            item = title, download_url, size, seeders, leechers
+                            if mode != 'RSS':
+                                logger.log(u"Found result: %s " % title, logger.DEBUG)
+
+                            items[mode].append(item)
 
                 except Exception, e:
                     logger.log(u"Failed parsing provider. Traceback: %s" % traceback.format_exc(), logger.ERROR)
@@ -208,42 +194,27 @@ class NextGenProvider(generic.TorrentProvider):
 
         return results
 
-    def findPropers(self, search_date=datetime.datetime.today()):
-
-        results = []
-
-        myDB = db.DBConnection()
-        sqlResults = myDB.select(
-            'SELECT s.show_name, e.showid, e.season, e.episode, e.status, e.airdate FROM tv_episodes AS e' +
-            ' INNER JOIN tv_shows AS s ON (e.showid = s.indexer_id)' +
-            ' WHERE e.airdate >= ' + str(search_date.toordinal()) +
-            ' AND (e.status IN (' + ','.join([str(x) for x in Quality.DOWNLOADED]) + ')' +
-            ' OR (e.status IN (' + ','.join([str(x) for x in Quality.SNATCHED]) + ')))'
-        )
-
-        if not sqlResults:
-            return []
-
-        for sqlshow in sqlResults:
-            self.show = helpers.findCertainShow(sickbeard.showList, int(sqlshow["showid"]))
-            if self.show:
-                curEp = self.show.getEpisode(int(sqlshow["season"]), int(sqlshow["episode"]))
-                searchString = self._get_episode_search_strings(curEp, add_string='PROPER|REPACK')
-
-                for item in self._doSearch(searchString[0]):
-                    title, url = self._get_title_and_url(item)
-                    results.append(classes.Proper(title, url, datetime.datetime.today(), self.show))
-
-        return results
+    def _convertSize(self, size):
+        size, modifier = size[:-2], size[-2:]
+        size = float(size)
+        if modifier in 'KB':
+            size = size * 1024
+        elif modifier in 'MB':
+            size = size * 1024**2
+        elif modifier in 'GB':
+            size = size * 1024**3
+        elif modifier in 'TB':
+            size = size * 1024**4
+        return int(size)
 
     def seedRatio(self):
         return self.ratio
 
 
 class NextGenCache(tvcache.TVCache):
-    def __init__(self, provider):
+    def __init__(self, provider_obj):
 
-        tvcache.TVCache.__init__(self, provider)
+        tvcache.TVCache.__init__(self, provider_obj)
 
         # Only poll NextGen every 10 minutes max
         self.minTime = 10

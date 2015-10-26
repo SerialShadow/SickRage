@@ -19,14 +19,14 @@
 import urllib
 import datetime
 
-import generic
 
 from sickbeard import classes
 from sickbeard import show_name_helpers
 
 from sickbeard import logger
-from sickbeard.common import *
+
 from sickbeard import tvcache
+from sickbeard.providers import generic
 
 
 class animenzb(generic.NZBProvider):
@@ -39,8 +39,6 @@ class animenzb(generic.NZBProvider):
         self.public = True
         self.supportsAbsoluteNumbering = True
         self.anime_only = True
-
-        self.enabled = False
 
         self.cache = animenzbCache(self)
 
@@ -71,7 +69,7 @@ class animenzb(generic.NZBProvider):
         }
 
         searchURL = self.url + "rss?" + urllib.urlencode(params)
-        logger.log(u"Search URL: %s" %  searchURL, logger.DEBUG)  
+        logger.log(u"Search URL: %s" %  searchURL, logger.DEBUG)
         results = []
         for curItem in self.cache.getRSSFeed(searchURL, items=['entries'])['entries'] or []:
             (title, url) = self._get_title_and_url(curItem)
@@ -82,7 +80,7 @@ class animenzb(generic.NZBProvider):
 
         #For each search mode sort all the items by seeders if available if available
         results.sort(key=lambda tup: tup[0], reverse=True)
-        
+
         return results
 
     def findPropers(self, date=None):
@@ -109,9 +107,9 @@ class animenzb(generic.NZBProvider):
 
 class animenzbCache(tvcache.TVCache):
 
-    def __init__(self, provider):
+    def __init__(self, provider_obj):
 
-        tvcache.TVCache.__init__(self, provider)
+        tvcache.TVCache.__init__(self, provider_obj)
 
         # only poll animenzb every 20 minutes max
         self.minTime = 20
